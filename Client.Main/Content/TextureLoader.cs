@@ -212,7 +212,7 @@ namespace Client.Main.Content
 
             if (textureInfo.IsCompressed)
             {
-                texture = new Texture2D(_graphicsDevice, textureInfo.Width, textureInfo.Height, false, textureInfo.Format);
+                texture = new Texture2D(_graphicsDevice, textureInfo.Width, textureInfo.Height, false, (SurfaceFormat)textureInfo.Format);
                 texture.SetData(textureInfo.Data);
             }
             else
