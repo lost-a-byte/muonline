@@ -12,7 +12,7 @@ namespace Client.Main.Controls.Terrain
         public Vector2 Center;
         public bool IsVisible;
         public int Xi, Yi;
-        
+
         // Hierarchical culling data
         public bool[] TileVisibility = new bool[16]; // 4x4 tiles per block
         public int VisibleTileCount;
@@ -28,6 +28,9 @@ namespace Client.Main.Controls.Terrain
         private const int MaxLodLevels = 2;
         private const float LodDistanceMultiplier = 3000f;
         private const float CameraMoveThreshold = 32f;
+        // Slight conservative padding (world units) to avoid edge popping
+        private const float CullingPaddingXY = 64f; // ~0.64 tile with TERRAIN_SCALE=100
+        private const float CullingPaddingZ = 32f;  // Small vertical slack
 
         private readonly TerrainData _data;
         private readonly TerrainBlockCache _blockCache;
@@ -122,10 +125,11 @@ namespace Client.Main.Controls.Terrain
                     }
 
                     block.LODLevel = GetLodLevel(MathF.Sqrt(distSq));
-                    
-                    var containment = frustum.Contains(block.Bounds);
+
+                    var paddedBounds = Inflate(block.Bounds, CullingPaddingXY, CullingPaddingZ);
+                    var containment = frustum.Contains(paddedBounds);
                     block.IsVisible = containment != ContainmentType.Disjoint;
-                    
+
                     if (block.IsVisible)
                     {
                         // Hierarchical culling: check individual tiles within the block
@@ -141,9 +145,9 @@ namespace Client.Main.Controls.Terrain
                         {
                             // Block is partially inside frustum - test individual tiles
                             block.FullyVisible = false;
-                            PerformTileCulling(block, frustum);
+                            PerformTileCulling(block, frustum, CullingPaddingXY, CullingPaddingZ);
                         }
-                        
+
                         visible.Add(block);
                     }
                 }
@@ -162,24 +166,54 @@ namespace Client.Main.Controls.Terrain
             return Math.Min(l, MaxLodLevels - 1);
         }
 
-        private void PerformTileCulling(TerrainBlock block, BoundingFrustum frustum)
+        private void PerformTileCulling(TerrainBlock block, BoundingFrustum frustum, float padXY, float padZ)
         {
             block.VisibleTileCount = 0;
-            
-            // For partially visible blocks, be more conservative - assume all tiles are visible
-            // This prevents black holes on frustum edges at minimal performance cost
+
             for (int tileY = 0; tileY < BlockSize; tileY++)
             {
                 for (int tileX = 0; tileX < BlockSize; tileX++)
                 {
-                    int tileIdx = tileY * BlockSize + tileX;
-                    
-                    // Conservative approach: if block is partially visible, render all its tiles
-                    // This eliminates black holes on edges with minimal performance impact
-                    block.TileVisibility[tileIdx] = true;
-                    block.VisibleTileCount++;
+                    int x = block.Xi + tileX;
+                    int y = block.Yi + tileY;
+
+                    // 4 corner heights for tight AABB
+                    int i1 = GetTerrainIndexRepeat(x, y);
+                    int i2 = GetTerrainIndexRepeat(x + 1, y);
+                    int i3 = GetTerrainIndexRepeat(x + 1, y + 1);
+                    int i4 = GetTerrainIndexRepeat(x, y + 1);
+
+                    float hmin = MathF.Min(MathF.Min(_data.HeightMap[i1].B, _data.HeightMap[i2].B),
+                                           MathF.Min(_data.HeightMap[i3].B, _data.HeightMap[i4].B)) * 1.5f;
+                    float hmax = MathF.Max(MathF.Max(_data.HeightMap[i1].B, _data.HeightMap[i2].B),
+                                           MathF.Max(_data.HeightMap[i3].B, _data.HeightMap[i4].B)) * 1.5f;
+
+                    float sx = x * Constants.TERRAIN_SCALE;
+                    float sy = y * Constants.TERRAIN_SCALE;
+                    float ex = (x + 1) * Constants.TERRAIN_SCALE;
+                    float ey = (y + 1) * Constants.TERRAIN_SCALE;
+
+                    // Inflate per-tile bounds slightly to provide conservative coverage near frustum edges
+                    var tileBounds = new BoundingBox(
+                        new Vector3(sx - padXY, sy - padXY, hmin - padZ),
+                        new Vector3(ex + padXY, ey + padXY, hmax + padZ));
+                    bool visible = frustum.Contains(tileBounds) != ContainmentType.Disjoint;
+
+                    int idx = tileY * BlockSize + tileX;
+                    block.TileVisibility[idx] = visible;
+                    if (visible) block.VisibleTileCount++;
                 }
             }
+
+            // If all tiles ended up visible, mark FullyVisible to skip per-tile checks next frame
+            // Block is 4x4 tiles -> 16 total
+            block.FullyVisible = block.VisibleTileCount == 16;
+        }
+
+        private static BoundingBox Inflate(BoundingBox bounds, float padXY, float padZ)
+        {
+            var pad = new Vector3(padXY, padXY, padZ);
+            return new BoundingBox(bounds.Min - pad, bounds.Max + pad);
         }
 
         private static int GetTerrainIndexRepeat(int x, int y)

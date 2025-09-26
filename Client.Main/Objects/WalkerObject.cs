@@ -14,6 +14,8 @@ namespace Client.Main.Objects
 {
     public abstract class WalkerObject : ModelObject
     {
+        protected override bool RequiresPerFrameAnimation => true;
+
         // Fields: rotation and movement
         private Vector3 _targetAngle;
         private Direction _direction;
@@ -183,8 +185,7 @@ namespace Client.Main.Objects
 
             UpdatePosition(gameTime);
 
-            // Call the animation update method
-            Animation(gameTime);
+            // Animation handled centrally to preserve cross-action blending
 
             if (_currentPath != null && _currentPath.Count > 0 && !IsMoving)
             {

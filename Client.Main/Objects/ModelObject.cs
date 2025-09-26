@@ -8,6 +8,7 @@ using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Reflection;
 using Client.Main.Controls;
@@ -95,7 +96,14 @@ namespace Client.Main.Objects
         }
         public bool RenderShadow { get => _renderShadow; set { _renderShadow = value; OnRenderShadowChanged(); } }
         public float AnimationSpeed { get; set; } = 4f;
+        public bool ContinuousAnimation { get; set; }
+        public bool PreventLastFrameInterpolation { get; set; }
         public static ILoggerFactory AppLoggerFactory { get; private set; }
+
+        public static void SetLoggerFactory(ILoggerFactory loggerFactory)
+        {
+            AppLoggerFactory = loggerFactory;
+        }
         protected ILogger _logger;
 
         public int ItemLevel { get; set; } = 0;
@@ -128,6 +136,8 @@ namespace Client.Main.Objects
         private static readonly RasterizerState _cullClockwise = RasterizerState.CullClockwise;
         private static readonly RasterizerState _cullNone = RasterizerState.CullNone;
 
+        private static int _animationStrideSeed = 0;
+
         private static float GetCachedTime()
         {
             int currentTick = Environment.TickCount;
@@ -148,7 +158,7 @@ namespace Client.Main.Objects
 
         // Bounding box update optimization
         private int _boundingFrameCounter = BoundingUpdateInterval;
-        private const int BoundingUpdateInterval = 10;
+        private const int BoundingUpdateInterval = 4;
 
         // Animation and buffer optimization
 
@@ -157,16 +167,16 @@ namespace Client.Main.Objects
         private int _lastCachedAction = -1;
         private float _lastCachedAnimTime = -1;
         private bool _boneMatrixCacheValid = false;
-        
+
         // Local animation optimization - per object only
         private struct LocalAnimationState
         {
             public int ActionIndex;
             public int Frame0;
-            public int Frame1; 
+            public int Frame1;
             public float InterpolationFactor;
             public double AnimTime;
-            
+
             public bool Equals(LocalAnimationState other)
             {
                 return ActionIndex == other.ActionIndex &&
@@ -175,11 +185,11 @@ namespace Client.Main.Objects
                        Math.Abs(InterpolationFactor - other.InterpolationFactor) < 0.001f; // More strict
             }
         }
-        
+
         private LocalAnimationState _lastAnimationState;
         private bool _animationStateValid = false;
         private Matrix[] _tempBoneTransforms = null; // Reusable temp array
-        
+
 
         // Buffer invalidation flags
         private const uint BUFFER_FLAG_ANIMATION = 1u << 0;      // Animation/bones changed
@@ -188,6 +198,43 @@ namespace Client.Main.Objects
         private const uint BUFFER_FLAG_MATERIAL = 1u << 3;      // Material properties changed
         private const uint BUFFER_FLAG_TEXTURE = 1u << 4;       // Texture changed
         private const uint BUFFER_FLAG_ALL = uint.MaxValue;     // Force full rebuild
+
+        // State grouping optimization
+        private readonly struct MeshStateKey : IEquatable<MeshStateKey>
+        {
+            public readonly Texture2D Texture;
+            public readonly BlendState BlendState;
+            public readonly bool TwoSided;
+
+            public MeshStateKey(Texture2D tex, BlendState blend, bool twoSided)
+            {
+                Texture = tex;
+                BlendState = blend;
+                TwoSided = twoSided;
+            }
+
+            public bool Equals(MeshStateKey other) =>
+                ReferenceEquals(Texture, other.Texture) &&
+                ReferenceEquals(BlendState, other.BlendState) &&
+                TwoSided == other.TwoSided;
+
+            public override bool Equals(object obj) => obj is MeshStateKey o && Equals(o);
+
+            public override int GetHashCode()
+            {
+                unchecked
+                {
+                    int h = 17;
+                    h = h * 31 + (Texture?.GetHashCode() ?? 0);
+                    h = h * 31 + (BlendState?.GetHashCode() ?? 0);
+                    h = h * 31 + (TwoSided ? 1 : 0);
+                    return h;
+                }
+            }
+        }
+
+        // Reuse for grouping to avoid allocations
+        private Dictionary<MeshStateKey, List<int>> _meshGroups = new Dictionary<MeshStateKey, List<int>>(32);
 
         // Per-mesh buffer cache
         private struct MeshBufferCache
@@ -201,13 +248,26 @@ namespace Client.Main.Objects
         }
         private MeshBufferCache[] _meshBufferCache;
 
+        private readonly int _animationStrideOffset;
+        public int AnimationUpdateStride { get; private set; } = 1;
+        protected virtual bool RequiresPerFrameAnimation => false;
+
         public ModelObject()
         {
             _logger = AppLoggerFactory?.CreateLogger(GetType());
             MatrixChanged += (_s, _e) => UpdateWorldPosition();
+            _animationStrideOffset = Interlocked.Increment(ref _animationStrideSeed) & 31;
         }
 
         private Vector3 _lastFrameLight = Vector3.Zero;
+        private double _lastLightUpdateTime = 0;
+
+        // Quantized lighting sample (reduces CPU work without visible change)
+        private const float _LIGHT_SAMPLE_GRID = 8f; // world units per cell
+        private Vector2 _lastLightSampleCell = new Vector2(float.MaxValue);
+        private Vector3 _lastSampledLight = Vector3.Zero;
+        private double _lastAnimationUpdateTime = 0;
+        private double _lastFrameTimeMs = 0; // To track timing in methods without GameTime
 
         public override async Task LoadContent()
         {
@@ -242,12 +302,21 @@ namespace Client.Main.Objects
             _meshBlendByScript = new bool[meshCount];
             _meshTexturePath = new string[meshCount];
 
+            // PERFORMANCE: Preload all textures during LoadContent to avoid SetData during gameplay
+            var texturePreloadTasks = new List<Task>();
+
             for (int meshIndex = 0; meshIndex < meshCount; meshIndex++)
             {
                 var mesh = Model.Meshes[meshIndex];
                 string texturePath = BMDLoader.Instance.GetTexturePath(Model, mesh.TexturePath);
 
                 _meshTexturePath[meshIndex] = texturePath;
+
+                // Preload texture data asynchronously to avoid lazy loading during render
+                if (!string.IsNullOrEmpty(texturePath))
+                {
+                    texturePreloadTasks.Add(TextureLoader.Instance.Prepare(texturePath));
+                }
 
                 _boneTextures[meshIndex] = TextureLoader.Instance.GetTexture2D(texturePath);
                 _scriptTextures[meshIndex] = TextureLoader.Instance.GetScript(texturePath);
@@ -258,8 +327,14 @@ namespace Client.Main.Objects
                 _meshBlendByScript[meshIndex] = _scriptTextures[meshIndex]?.Bright ?? false;
             }
 
+            // Wait for all textures to be preloaded
+            if (texturePreloadTasks.Count > 0)
+            {
+                await Task.WhenAll(texturePreloadTasks);
+            }
+
             _blendMeshIndicesScratch = new int[meshCount];
-            
+
             // Initialize mesh buffer cache
             _meshBufferCache = new MeshBufferCache[meshCount];
             for (int i = 0; i < meshCount; i++)
@@ -302,6 +377,7 @@ namespace Client.Main.Objects
             bool isVisible = Visible;
 
             // Process animation for the parent first. This ensures its BoneTransform is up-to-date.
+            // Centralized animation (includes cross-action blending). LinkParentAnimation skips.
             if (isVisible && !LinkParentAnimation)
             {
                 Animation(gameTime);
@@ -336,34 +412,76 @@ namespace Client.Main.Objects
             if (!isVisible) return;
 
             // Like old code: Check if lighting has changed significantly (for static objects)
-            Vector3 currentLight = LightEnabled && World?.Terrain != null
-                ? World.Terrain.EvaluateTerrainLight(WorldPosition.Translation.X, WorldPosition.Translation.Y) + Light
-                : Light;
-
-            // Add dynamic lighting to currentLight for CPU-based lighting
             bool hasDynamicLightingShader = Constants.ENABLE_DYNAMIC_LIGHTING_SHADER &&
                                            GraphicsManager.Instance.DynamicLightingEffect != null;
 
+            Vector3 currentLight;
+
+            // CPU lighting path (shader disabled): sample terrain light on a small grid
             if (!hasDynamicLightingShader && LightEnabled && World?.Terrain != null)
             {
-                currentLight += World.Terrain.EvaluateDynamicLight(new Vector2(WorldPosition.Translation.X, WorldPosition.Translation.Y));
+                var pos = WorldPosition.Translation;
+                var cell = new Vector2(
+                    MathF.Floor(pos.X / _LIGHT_SAMPLE_GRID),
+                    MathF.Floor(pos.Y / _LIGHT_SAMPLE_GRID));
+
+                if (_lastLightSampleCell != cell)
+                {
+                    // Terrain base light
+                    _lastSampledLight = World.Terrain.EvaluateTerrainLight(pos.X, pos.Y);
+                    // Include dynamic lights on CPU path only
+                    _lastSampledLight += World.Terrain.EvaluateDynamicLight(new Vector2(pos.X, pos.Y));
+                    _lastLightSampleCell = cell;
+                }
+
+                currentLight = _lastSampledLight + Light;
+            }
+            else
+            {
+                currentLight = LightEnabled && World?.Terrain != null
+                    ? World.Terrain.EvaluateTerrainLight(WorldPosition.Translation.X, WorldPosition.Translation.Y) + Light
+                    : Light;
             }
 
             if (!LinkParentAnimation && _contentLoaded)
             {
-                bool lightChanged = Vector3.DistanceSquared(currentLight, _lastFrameLight) > 0.0001f;
-                if (lightChanged)
+                // PERFORMANCE: Only invalidate lighting for CPU lighting path - shader lighting doesn't need buffer rebuilds
+                if (!hasDynamicLightingShader)
                 {
-                    InvalidateBuffers(BUFFER_FLAG_LIGHTING);
-                    _lastFrameLight = currentLight;
+                    // Reduce throttling for PlayerObjects to ensure proper rendering
+                    bool isMainPlayer = this is PlayerObject p && p.IsMainWalker;
+                    double lightUpdateInterval = isMainPlayer ? 16.67 : 50; // 60Hz for main player, 20Hz for others
+                    float lightThreshold = isMainPlayer ? 0.001f : 0.01f;   // More sensitive for main player
+
+                    double currentTime = gameTime.TotalGameTime.TotalMilliseconds;
+                    bool shouldCheckLight = currentTime - _lastLightUpdateTime > lightUpdateInterval;
+
+                    if (shouldCheckLight)
+                    {
+                        bool lightChanged = Vector3.DistanceSquared(currentLight, _lastFrameLight) > lightThreshold;
+                        if (lightChanged)
+                        {
+                            InvalidateBuffers(BUFFER_FLAG_LIGHTING);
+                            _lastFrameLight = currentLight;
+                        }
+                        _lastLightUpdateTime = currentTime;
+                    }
                 }
             }
+
+            // Track frame time for methods that need it
+            _lastFrameTimeMs = gameTime.TotalGameTime.TotalMilliseconds;
 
             // Like old code: always call SetDynamicBuffers when content is loaded
             if (_contentLoaded)
             {
                 SetDynamicBuffers();
             }
+        }
+
+        public void SetAnimationUpdateStride(int stride)
+        {
+            AnimationUpdateStride = Math.Max(1, stride);
         }
 
         public override void Draw(GameTime gameTime)
@@ -397,7 +515,7 @@ namespace Client.Main.Objects
             var projection = Camera.Instance.Projection;
             var worldPos = WorldPosition;
 
-            // Pre-calculate shadow and highlight states
+            // Pre-calculate shadow and highlight states at object level
             bool doShadow = false;
             Matrix shadowMatrix = Matrix.Identity;
             if (!isAfterDraw && RenderShadow && !LowQuality)
@@ -418,59 +536,181 @@ namespace Client.Main.Objects
                 highlightColor = this is MonsterObject ? _redHighlight : _greenHighlight;
             }
 
-            // First pass - draw non-blend meshes (batch similar operations)
+            // Group meshes by render state to minimize state changes
+            GroupMeshesByState(isAfterDraw);
+
+            var gd = GraphicsDevice;
+            var effect = GraphicsManager.Instance.AlphaTestEffect3D;
+            // Object-level alpha is constant; set once for the pass
+            if (effect != null) effect.Alpha = TotalAlpha;
+
+            // Render each group with minimal state changes
+            foreach (var kvp in _meshGroups)
+            {
+                var stateKey = kvp.Key;
+                var meshIndices = kvp.Value;
+                if (meshIndices.Count == 0) continue;
+
+                // Apply render state once per group (with object depth bias)
+                gd.BlendState = stateKey.BlendState;
+                float depthBias = GetDepthBias();
+                if (depthBias != 0f)
+                {
+                    var cm = stateKey.TwoSided ? CullMode.None : CullMode.CullClockwiseFace;
+                    gd.RasterizerState = GraphicsManager.GetCachedRasterizerState(depthBias, cm);
+                }
+                else
+                {
+                    gd.RasterizerState = stateKey.TwoSided ? RasterizerState.CullNone : RasterizerState.CullClockwise;
+                }
+                effect.Texture = stateKey.Texture;
+
+                // Bind effect once per group
+                if (effect != null)
+                {
+                    var passes = effect.CurrentTechnique.Passes;
+                    for (int p = 0; p < passes.Count; p++)
+                        passes[p].Apply();
+                }
+
+                // Object-level shadow and highlight passes
+                if (doShadow)
+                    DrawMeshesShadow(meshIndices, shadowMatrix, view, projection);
+                if (highlightAllowed)
+                    DrawMeshesHighlight(meshIndices, highlightMatrix, highlightColor);
+
+                // Draw all meshes in this state group
+                for (int n = 0; n < meshIndices.Count; n++)
+                {
+                    int mi = meshIndices[n];
+                    if (NeedsSpecialShaderForMesh(mi))
+                        DrawMesh(mi); // Falls back to full per-mesh path for special shaders
+                    else
+                        DrawMeshFastAlpha(mi); // Fast path: VB/IB bind + draw only
+                }
+            }
+        }
+
+        // Fast path draw for standard alpha-tested meshes (no special shaders)
+        private void DrawMeshFastAlpha(int mesh)
+        {
+            if (_boneVertexBuffers == null || _boneIndexBuffers == null || _boneTextures == null)
+                return;
+            if (mesh < 0 ||
+                mesh >= _boneVertexBuffers.Length ||
+                mesh >= _boneIndexBuffers.Length ||
+                mesh >= _boneTextures.Length ||
+                _boneVertexBuffers[mesh] == null ||
+                _boneIndexBuffers[mesh] == null ||
+                _boneTextures[mesh] == null ||
+                IsHiddenMesh(mesh))
+                return;
+
+            var gd = GraphicsDevice;
+            gd.SetVertexBuffer(_boneVertexBuffers[mesh]);
+            gd.Indices = _boneIndexBuffers[mesh];
+            int primitiveCount = gd.Indices.IndexCount / 3;
+            gd.DrawIndexedPrimitives(PrimitiveType.TriangleList, 0, 0, primitiveCount);
+        }
+
+        // Determines if this mesh needs special shader path and cannot use fast alpha path
+        private bool NeedsSpecialShaderForMesh(int mesh)
+        {
+            // Only force standard path for fading monsters (to guarantee alpha/darken visibility)
+            if (this is MonsterObject mo && mo.IsDead)
+                return false;
+            // Dynamic lighting shader
+            bool useDynamicLighting = Constants.ENABLE_DYNAMIC_LIGHTING_SHADER &&
+                                      GraphicsManager.Instance.DynamicLightingEffect != null;
+
+            // Item material shader (for excellent/ancient/high level items)
+            bool useItemMaterial = Constants.ENABLE_ITEM_MATERIAL_SHADER &&
+                                   (ItemLevel >= 7 || IsExcellentItem || IsAncientItem) &&
+                                   GraphicsManager.Instance.ItemMaterialEffect != null &&
+                                   ShouldApplyItemMaterial(mesh);
+
+            // Monster material shader
+            bool useMonsterMaterial = Constants.ENABLE_MONSTER_MATERIAL_SHADER &&
+                                      EnableCustomShader &&
+                                      GraphicsManager.Instance.MonsterMaterialEffect != null;
+
+            if (useItemMaterial || useMonsterMaterial)
+                return true;
+            if (useDynamicLighting && !useItemMaterial && !useMonsterMaterial)
+                return true;
+            return false;
+        }
+
+        private void GroupMeshesByState(bool isAfterDraw)
+        {
+            if (Model?.Meshes == null)
+            {
+                foreach (var list in _meshGroups.Values) list.Clear();
+                return;
+            }
+            // Clear previous groups and reuse lists
+            foreach (var list in _meshGroups.Values)
+                list.Clear();
+
+            int meshCount = Model.Meshes.Length;
+
             for (int i = 0; i < meshCount; i++)
             {
-                // Early exit conditions grouped together
-                if (IsHiddenMesh(i) || IsBlendMesh(i) || (LowQuality && IsBlendMesh(i)))
-                    continue;
+                if (IsHiddenMesh(i)) continue;
 
-                bool isRGBA = _meshIsRGBA[i];
-                bool shouldDraw = isAfterDraw ? isRGBA : !isRGBA;
+                bool isBlend = IsBlendMesh(i);
+                bool isRGBA = _meshIsRGBA != null && i < _meshIsRGBA.Length && _meshIsRGBA[i];
+
+                // Skip based on pass and low quality settings
+                if (LowQuality && isBlend) continue;
+                bool shouldDraw = isAfterDraw ? (isRGBA || isBlend) : (!isRGBA && !isBlend);
                 if (!shouldDraw) continue;
 
-                // Draw effects first (shadow, highlight) then main mesh
-                if (!isAfterDraw)
+                if (_boneTextures == null || i >= _boneTextures.Length)
                 {
-                    if (doShadow)
-                        DrawShadowMesh(i, view, projection, shadowMatrix);
-                    if (highlightAllowed)
-                        DrawMeshHighlight(i, highlightMatrix, highlightColor);
+                    continue;
                 }
 
-                DrawMesh(i);
+                var tex = _boneTextures[i];
+                var meshConf = Model.Meshes[i];
+                bool twoSided = isRGBA || isBlend || (meshConf.BlendingMode != null && meshConf.BlendingMode != "Opaque");
+
+                // Determine blend state
+                BlendState blend = BlendState.Opaque;
+                if (meshConf.BlendingMode != null && _blendStateCache != null && _blendStateCache.TryGetValue(meshConf.BlendingMode, out var custom))
+                    blend = custom;
+                else if (isBlend)
+                    blend = isRGBA ? BlendState.AlphaBlend : BlendState.Additive;
+
+                var key = new MeshStateKey(tex, blend, twoSided);
+                if (!_meshGroups.TryGetValue(key, out var list))
+                    _meshGroups[key] = list = new List<int>(8);
+
+                list.Add(i);
             }
+        }
 
-            // Second pass - blend meshes (optimized count and draw)
-            if (LowQuality) return;
+        private void DrawMeshesShadow(List<int> meshIndices, Matrix shadowMatrix, Matrix view, Matrix projection)
+        {
+            for (int n = 0; n < meshIndices.Count; n++)
+                DrawShadowMesh(meshIndices[n], view, projection, shadowMatrix);
+        }
 
-            int blendCount = 0;
-            // Count and store blend indices in one pass
-            for (int i = 0; i < meshCount; i++)
+        private void DrawMeshesHighlight(List<int> meshIndices, Matrix highlightMatrix, Vector3 highlightColor)
+        {
+            for (int n = 0; n < meshIndices.Count; n++)
             {
-                if (!IsHiddenMesh(i) && IsBlendMesh(i))
-                    _blendMeshIndicesScratch[blendCount++] = i;
-            }
-
-            if (blendCount == 0) return;
-
-            // Draw blend meshes
-            for (int n = 0; n < blendCount; n++)
-            {
-                int i = _blendMeshIndicesScratch[n];
-                bool isRGBA = _meshIsRGBA[i];
-                bool shouldDraw = isAfterDraw ? isRGBA || true : false;
-
-                if (!isAfterDraw)
+                int mi = meshIndices[n];
+                if (_boneVertexBuffers == null || _boneIndexBuffers == null || _boneTextures == null)
+                    return;
+                if (mi < 0 ||
+                    mi >= _boneVertexBuffers.Length ||
+                    mi >= _boneIndexBuffers.Length ||
+                    mi >= _boneTextures.Length)
                 {
-                    if (doShadow)
-                        DrawShadowMesh(i, view, projection, shadowMatrix);
-                    if (highlightAllowed)
-                        DrawMeshHighlight(i, highlightMatrix, highlightColor);
+                    continue;
                 }
-
-                if (shouldDraw)
-                    DrawMesh(i);
+                DrawMeshHighlight(mi, highlightMatrix, highlightColor);
             }
         }
 
@@ -497,14 +737,14 @@ namespace Client.Main.Objects
         {
             // Small bias values - negative values bring objects closer to camera
             var objectType = GetType();
-            
+
             if (objectType == typeof(PlayerObject))
                 return -0.00001f;  // Players slightly closer
             if (objectType == typeof(DroppedItemObject))
                 return -0.00002f;  // Items even closer  
             if (objectType == typeof(NPCObject))
                 return -0.000005f; // NPCs slightly closer than terrain
-            
+
             return 0f; // Default - no bias for terrain and other objects
         }
 
@@ -520,6 +760,8 @@ namespace Client.Main.Objects
 
         public virtual void DrawMesh(int mesh)
         {
+            if (Model?.Meshes == null || mesh < 0 || mesh >= Model.Meshes.Length)
+                return;
             if (_boneVertexBuffers?[mesh] == null ||
                 _boneIndexBuffers?[mesh] == null ||
                 _boneTextures?[mesh] == null ||
@@ -529,20 +771,14 @@ namespace Client.Main.Objects
             try
             {
                 var gd = GraphicsDevice;
-                
+
                 // Apply small depth bias based on object type to reduce Z-fighting
                 var prevRasterizer = gd.RasterizerState;
                 var depthBias = GetDepthBias();
                 if (depthBias != 0f)
                 {
-                    var customRasterizer = new RasterizerState
-                    {
-                        CullMode = prevRasterizer.CullMode,
-                        FillMode = prevRasterizer.FillMode,
-                        DepthBias = depthBias,
-                        SlopeScaleDepthBias = depthBias * 0.1f
-                    };
-                    gd.RasterizerState = customRasterizer;
+                    // PERFORMANCE: Use cached RasterizerState to avoid per-mesh allocation
+                    gd.RasterizerState = GraphicsManager.GetCachedRasterizerState(depthBias, prevRasterizer.CullMode, prevRasterizer);
                 }
 
                 // Use dynamic lighting effect if shader is enabled and available
@@ -598,7 +834,7 @@ namespace Client.Main.Objects
                 // for custom blending from json
                 // Apply new states from config first
                 var meshConf = Model.Meshes[mesh];
-                
+
                 // Check if mesh should be two-sided based on RGBA, blend mesh, or JSON config
                 bool isTwoSided = _meshIsRGBA[mesh] || isBlendMesh;
                 if (meshConf.BlendingMode != null && meshConf.BlendingMode != "Opaque")
@@ -622,15 +858,9 @@ namespace Client.Main.Objects
                 // Apply final rasterizer state (considering depth bias and culling)
                 if (depthBias != 0f)
                 {
-                    // Keep the custom rasterizer with depth bias but update culling
-                    var finalRasterizer = new RasterizerState
-                    {
-                        CullMode = isTwoSided ? CullMode.None : CullMode.CullClockwiseFace,
-                        FillMode = originalRasterizer.FillMode,
-                        DepthBias = depthBias,
-                        SlopeScaleDepthBias = depthBias * 0.1f
-                    };
-                    gd.RasterizerState = finalRasterizer;
+                    // PERFORMANCE: Use cached RasterizerState to avoid per-mesh allocation  
+                    CullMode cullMode = isTwoSided ? CullMode.None : CullMode.CullClockwiseFace;
+                    gd.RasterizerState = GraphicsManager.GetCachedRasterizerState(depthBias, cullMode, originalRasterizer);
                 }
                 else
                 {
@@ -674,6 +904,8 @@ namespace Client.Main.Objects
 
         public virtual void DrawMeshWithItemMaterial(int mesh)
         {
+            if (Model?.Meshes == null || mesh < 0 || mesh >= Model.Meshes.Length)
+                return;
             if (_boneVertexBuffers?[mesh] == null ||
                 _boneIndexBuffers?[mesh] == null ||
                 _boneTextures?[mesh] == null ||
@@ -700,7 +932,7 @@ namespace Client.Main.Objects
                 var prevBlend = gd.BlendState;
 
                 var meshConf = Model.Meshes[mesh];
-                
+
                 // Check if mesh should be two-sided based on RGBA, blend mesh, or JSON config
                 bool isTwoSided = _meshIsRGBA[mesh] || isBlendMesh;
                 if (meshConf.BlendingMode != null && meshConf.BlendingMode != "Opaque")
@@ -744,6 +976,7 @@ namespace Client.Main.Objects
                 effect.Parameters["Time"]?.SetValue(GetCachedTime());
                 effect.Parameters["IsAncient"]?.SetValue(IsAncientItem);
                 effect.Parameters["IsExcellent"]?.SetValue(IsExcellentItem);
+                effect.Parameters["Alpha"]?.SetValue(TotalAlpha);
                 //effect.Parameters["GlowColor"]?.SetValue(GlowColor);
 
                 gd.SetVertexBuffer(vertexBuffer);
@@ -769,6 +1002,8 @@ namespace Client.Main.Objects
 
         public virtual void DrawMeshWithMonsterMaterial(int mesh)
         {
+            if (Model?.Meshes == null || mesh < 0 || mesh >= Model.Meshes.Length)
+                return;
             if (_boneVertexBuffers?[mesh] == null ||
                 _boneIndexBuffers?[mesh] == null ||
                 _boneTextures?[mesh] == null ||
@@ -795,7 +1030,7 @@ namespace Client.Main.Objects
                 var prevBlend = gd.BlendState;
 
                 var meshConf = Model.Meshes[mesh];
-                
+
                 // Check if mesh should be two-sided based on RGBA, blend mesh, or JSON config
                 bool isTwoSided = _meshIsRGBA[mesh] || isBlendMesh;
                 if (meshConf.BlendingMode != null && meshConf.BlendingMode != "Opaque")
@@ -833,6 +1068,7 @@ namespace Client.Main.Objects
                 effect.Parameters["GlowIntensity"]?.SetValue(GlowIntensity);
                 effect.Parameters["EnableGlow"]?.SetValue(GlowIntensity > 0.0f);
                 effect.Parameters["Time"]?.SetValue(GetCachedTime());
+                effect.Parameters["Alpha"]?.SetValue(TotalAlpha);
 
                 gd.SetVertexBuffer(vertexBuffer);
                 gd.Indices = indexBuffer;
@@ -857,6 +1093,8 @@ namespace Client.Main.Objects
 
         public virtual void DrawMeshWithDynamicLighting(int mesh)
         {
+            if (Model?.Meshes == null || mesh < 0 || mesh >= Model.Meshes.Length)
+                return;
             if (_boneVertexBuffers?[mesh] == null ||
                 _boneIndexBuffers?[mesh] == null ||
                 _boneTextures?[mesh] == null ||
@@ -883,7 +1121,7 @@ namespace Client.Main.Objects
                 var prevBlend = gd.BlendState;
 
                 var meshConf = Model.Meshes[mesh];
-                
+
                 // Check if mesh should be two-sided based on RGBA, blend mesh, or JSON config
                 bool isTwoSided = _meshIsRGBA[mesh] || isBlendMesh;
                 if (meshConf.BlendingMode != null && meshConf.BlendingMode != "Opaque")
@@ -992,6 +1230,15 @@ namespace Client.Main.Objects
             if (IsHiddenMesh(mesh) || _boneVertexBuffers == null || _boneIndexBuffers == null || _boneTextures == null)
                 return;
 
+            // Defensive range checks to avoid races when buffers are swapped during async loads
+            if (mesh < 0 ||
+                mesh >= _boneVertexBuffers.Length ||
+                mesh >= _boneIndexBuffers.Length ||
+                mesh >= _boneTextures.Length)
+            {
+                return;
+            }
+
             VertexBuffer vertexBuffer = _boneVertexBuffers[mesh];
             IndexBuffer indexBuffer = _boneIndexBuffers[mesh];
 
@@ -1015,11 +1262,7 @@ namespace Client.Main.Objects
             alphaTestEffect.Alpha = 1f;
 
             // Configure depth and blend states for drawing the highlight
-            GraphicsDevice.DepthStencilState = new DepthStencilState
-            {
-                DepthBufferEnable = true,
-                DepthBufferWriteEnable = false
-            };
+            GraphicsDevice.DepthStencilState = GraphicsManager.ReadOnlyDepth;
             GraphicsDevice.BlendState = BlendState.Additive;
 
             // Draw the mesh highlight
@@ -1130,14 +1373,9 @@ namespace Client.Main.Objects
                 var prevRasterizerState = GraphicsDevice.RasterizerState;
 
                 float constBias = 1f / (1 << 24);
-                float slopeBias = -1.0f;
 
-                RasterizerState ShadowRasterizer = new RasterizerState
-                {
-                    CullMode = CullMode.None,
-                    DepthBias = constBias * -20,
-                    SlopeScaleDepthBias = slopeBias
-                };
+                // PERFORMANCE: Use cached RasterizerState to avoid per-mesh allocation
+                RasterizerState ShadowRasterizer = GraphicsManager.GetCachedRasterizerState(constBias * -20, CullMode.None);
 
                 GraphicsDevice.BlendState = Blendings.ShadowBlend;
                 GraphicsDevice.DepthStencilState = DepthStencilState.DepthRead;
@@ -1203,6 +1441,19 @@ namespace Client.Main.Objects
             BoneTransform = null;
             _invalidatedBufferFlags = 0;
 
+            // Release graphics resources and mark content as unloaded
+            _boneVertexBuffers = null;
+            _boneIndexBuffers = null;
+            _boneTextures = null;
+            _scriptTextures = null;
+            _dataTextures = null;
+            _meshIsRGBA = null;
+            _meshHiddenByScript = null;
+            _meshBlendByScript = null;
+            _meshTexturePath = null;
+            _blendMeshIndicesScratch = null;
+            _contentLoaded = false;
+
             // Clear cache references
             _cachedBoneMatrix = null;
             _boneMatrixCacheValid = false;
@@ -1245,13 +1496,15 @@ namespace Client.Main.Objects
             var bones = BoneTransform;
             int boneCount = bones.Length;
 
+            // Optimized: Only sample every 4th vertex for performance while maintaining accuracy
             for (int meshIndex = 0; meshIndex < meshes.Length; meshIndex++)
             {
                 var mesh = meshes[meshIndex];
                 var vertices = mesh.Vertices;
                 if (vertices == null) continue;
 
-                for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex++)
+                int step = Math.Max(1, vertices.Length / 32); // Sample max 32 vertices per mesh
+                for (int vertexIndex = 0; vertexIndex < vertices.Length; vertexIndex += step)
                 {
                     var vertex = vertices[vertexIndex];
                     int boneIndex = vertex.Node;
@@ -1286,7 +1539,27 @@ namespace Client.Main.Objects
             int totalFrames = Math.Max(action.NumAnimationKeys, 1);
             float delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
 
-            if (totalFrames == 1)
+            // Detect death action for walkers to clamp on second-to-last key
+            bool isDeathAction = false;
+            if (this is WalkerObject)
+            {
+                if (this is PlayerObject)
+                {
+                    var pa = (PlayerAction)currentActionIndex;
+                    isDeathAction = pa == PlayerAction.PlayerDie1 || pa == PlayerAction.PlayerDie2;
+                }
+                else if (this is MonsterObject)
+                {
+                    isDeathAction = currentActionIndex == (int)Client.Main.Models.MonsterActionType.Die;
+                }
+                else if (this is NPCObject)
+                {
+                    var pa = (PlayerAction)currentActionIndex;
+                    isDeathAction = pa == PlayerAction.PlayerDie1 || pa == PlayerAction.PlayerDie2;
+                }
+            }
+
+            if (totalFrames == 1 && !ContinuousAnimation)
             {
                 if (_priorAction != currentActionIndex)
                 {
@@ -1311,10 +1584,32 @@ namespace Client.Main.Objects
             }
 
             _animTime += delta * (action.PlaySpeed == 0 ? 1.0f : action.PlaySpeed) * AnimationSpeed;
-            double framePos = _animTime % totalFrames;
+            double framePos;
+            if (isDeathAction)
+            {
+                int endIdx = Math.Max(0, totalFrames - 2);
+                _animTime = Math.Min(_animTime, endIdx + 0.0001f);
+                framePos = _animTime;
+            }
+            else
+            {
+                framePos = _animTime % totalFrames;
+            }
             int f0 = (int)framePos;
             int f1 = (f0 + 1) % totalFrames;
             float t = (float)(framePos - f0);
+
+            // Only applies to objects that specifically request it (e.g., portals with stuttering)
+            if (PreventLastFrameInterpolation && totalFrames > 1 && f0 == totalFrames - 1)
+            {
+                // Instead of interpolating lastFrame->firstFrame, restart smoothly
+                // This eliminates the visual "jump" that causes animation stuttering
+                f0 = 0;
+                f1 = 1;
+                t = 0.0f;
+                framePos = 0.0;
+                _animTime = _animTime - (totalFrames - 1); // Adjust time to maintain continuity
+            }
 
             GenerateBoneMatrix(currentActionIndex, f0, f1, t);
 
@@ -1355,7 +1650,7 @@ namespace Client.Main.Objects
 
         protected void GenerateBoneMatrix(int actionIdx, int frame0, int frame1, float t)
         {
-            if (Model?.Bones == null || Model.Actions == null || Model.Actions.Length == 0) 
+            if (Model?.Bones == null || Model.Actions == null || Model.Actions.Length == 0)
             {
                 // Reset animation cache for invalid models
                 _animationStateValid = false;
@@ -1368,9 +1663,9 @@ namespace Client.Main.Objects
 
             // Create animation state for comparison - only for animated objects
             LocalAnimationState currentAnimState = default;
-            bool shouldCheckCache = !LinkParentAnimation && ParentBoneLink < 0 && 
+            bool shouldCheckCache = !LinkParentAnimation && ParentBoneLink < 0 &&
                                    action.NumAnimationKeys > 1; // Only cache animated objects
-            
+
             if (shouldCheckCache)
             {
                 currentAnimState = new LocalAnimationState
@@ -1384,7 +1679,7 @@ namespace Client.Main.Objects
 
                 // Check if we can skip expensive calculation using local cache
                 // But be more conservative - only skip if frames and interpolation are identical
-                if (_animationStateValid && currentAnimState.Equals(_lastAnimationState) && 
+                if (_animationStateValid && currentAnimState.Equals(_lastAnimationState) &&
                     BoneTransform != null && BoneTransform.Length == bones.Length)
                 {
                     // Animation state hasn't changed - no need to recalculate
@@ -1408,7 +1703,7 @@ namespace Client.Main.Objects
             int maxFrameIndex = action.NumAnimationKeys - 1;
             frame0 = Math.Clamp(frame0, 0, maxFrameIndex);
             frame1 = Math.Clamp(frame1, 0, maxFrameIndex);
-            
+
             // If frames are the same, no interpolation needed
             if (frame0 == frame1) t = 0f;
 
@@ -1429,7 +1724,7 @@ namespace Client.Main.Objects
                 var bm = bone.Matrixes[actionIdx];
                 int numPosKeys = bm.Position?.Length ?? 0;
                 int numQuatKeys = bm.Quaternion?.Length ?? 0;
-                
+
                 if (numPosKeys == 0 || numQuatKeys == 0)
                 {
                     _tempBoneTransforms[i] = Matrix.Identity;
@@ -1459,7 +1754,7 @@ namespace Client.Main.Objects
                     Quaternion q = Quaternion.Slerp(bm.Quaternion[boneFrame0], bm.Quaternion[boneFrame1], boneT);
                     Vector3 p0 = bm.Position[boneFrame0];
                     Vector3 p1 = bm.Position[boneFrame1];
-                    
+
                     localTransform = Matrix.CreateFromQuaternion(q);
                     localTransform.M41 = p0.X + (p1.X - p0.X) * boneT;
                     localTransform.M42 = p0.Y + (p1.Y - p0.Y) * boneT;
@@ -1486,7 +1781,7 @@ namespace Client.Main.Objects
 
                 // Store in temp array
                 _tempBoneTransforms[i] = worldTransform;
-                
+
                 // Check if this bone actually changed (simple comparison for performance)
                 if (BoneTransform[i] != worldTransform)
                 {
@@ -1496,18 +1791,30 @@ namespace Client.Main.Objects
 
             // For static objects (single frame) or first-time setup, always update
             bool forceUpdate = action.NumAnimationKeys <= 1 || !_animationStateValid;
-            
+
             // Only update final transforms and invalidate if something actually changed OR force update
             if (anyBoneChanged || forceUpdate)
             {
                 Array.Copy(_tempBoneTransforms, BoneTransform, bones.Length);
-                
-                // Always invalidate for static objects or when forced
-                if (anyBoneChanged || forceUpdate)
+
+                // Always invalidate animation for walkers (players/monsters/NPCs) to preserve smooth pacing
+                bool isImportantObject = RequiresPerFrameAnimation;
+                if (forceUpdate || isImportantObject)
                 {
                     InvalidateBuffers(BUFFER_FLAG_ANIMATION);
-                    UpdateBoundings();
                 }
+                else
+                {
+                    // Only throttle animation updates for non-critical objects (NPCs, monsters)
+                    const double ANIMATION_UPDATE_INTERVAL_MS = 20; // Max 20 Hz for non-critical objects
+
+                    if (_lastFrameTimeMs - _lastAnimationUpdateTime > ANIMATION_UPDATE_INTERVAL_MS)
+                    {
+                        InvalidateBuffers(BUFFER_FLAG_ANIMATION);
+                        _lastAnimationUpdateTime = _lastFrameTimeMs;
+                    }
+                }
+                UpdateBoundings();
             }
 
             // Always update cache for objects that should use it
@@ -1521,7 +1828,7 @@ namespace Client.Main.Objects
                 // Mark static objects as having valid animation state
                 _animationStateValid = true;
             }
-         }
+        }
 
 
         private void ComputeBoneMatrixTo(int actionIdx, int frame0, int frame1, float t, Matrix[] output)
@@ -1596,8 +1903,29 @@ namespace Client.Main.Objects
                     return;
                 }
 
+                // (Reverted) No frame-based throttling here to maintain smooth animations.
+
                 uint currentFrame = (uint)(MuGame.Instance.GameTime.TotalGameTime.TotalMilliseconds / 16.67f);
-                
+
+                // If we only have transform updates we can skip heavy CPU skinning work.
+                if ((_invalidatedBufferFlags & ~BUFFER_FLAG_TRANSFORM) == 0)
+                {
+                    _invalidatedBufferFlags &= ~BUFFER_FLAG_TRANSFORM;
+                    return;
+                }
+
+                // Allow attachments to update at a reduced frequency when only animation is dirty.
+                if ((_invalidatedBufferFlags & BUFFER_FLAG_ANIMATION) != 0 &&
+                    (_invalidatedBufferFlags & ~(BUFFER_FLAG_ANIMATION | BUFFER_FLAG_TRANSFORM)) == 0 &&
+                    AnimationUpdateStride > 1)
+                {
+                    if (((currentFrame + (uint)_animationStrideOffset) % (uint)AnimationUpdateStride) != 0)
+                    {
+                        _invalidatedBufferFlags &= ~BUFFER_FLAG_TRANSFORM;
+                        return;
+                    }
+                }
+
                 // Ensure arrays only when needed
                 bool needArrayResize = _boneVertexBuffers?.Length != meshCount;
                 if (needArrayResize)
@@ -1625,7 +1953,7 @@ namespace Client.Main.Objects
                 // Calculate lighting only once if lighting flags are set
                 Vector3 baseLight = Vector3.Zero;
                 bool needLightCalculation = (_invalidatedBufferFlags & BUFFER_FLAG_LIGHTING) != 0;
-                
+
                 if (needLightCalculation)
                 {
                     Vector3 worldTranslation = WorldPosition.Translation;
@@ -1655,15 +1983,14 @@ namespace Client.Main.Objects
 
                         // Calculate mesh-specific lighting
                         bool isBlend = IsBlendMesh(meshIndex);
-                        Vector3 meshLight = needLightCalculation 
+                        Vector3 meshLight = needLightCalculation
                             ? (isBlend ? baseLight * blendMeshLight : baseLight * totalAlpha)
                             : cache.CachedLight;
 
-                        // Check if this specific mesh needs update
+                        // Check if this specific mesh needs update - only on real changes
                         bool meshNeedsUpdate = !cache.IsValid ||
-                                             currentFrame - cache.LastUpdateFrame > 2 || // Refresh every few frames
                                              (needLightCalculation && Vector3.DistanceSquared(meshLight, cache.CachedLight) > 0.01f) ||
-                                             (_invalidatedBufferFlags & (BUFFER_FLAG_ANIMATION | BUFFER_FLAG_TRANSFORM)) != 0;
+                                             (_invalidatedBufferFlags & (BUFFER_FLAG_ANIMATION | BUFFER_FLAG_TRANSFORM | BUFFER_FLAG_LIGHTING | BUFFER_FLAG_TEXTURE)) != 0;
 
                         if (!meshNeedsUpdate)
                             continue;
@@ -1684,7 +2011,8 @@ namespace Client.Main.Objects
                             Model, meshIndex, bodyColor, bones,
                             ref _boneVertexBuffers[meshIndex],
                             ref _boneIndexBuffers[meshIndex],
-                            false);
+                            // Force bypassing internal cache when texture coordinates changed
+                            ((_invalidatedBufferFlags & BUFFER_FLAG_TEXTURE) != 0));
 
                         // Update cache
                         cache.VertexBuffer = _boneVertexBuffers[meshIndex];
@@ -1694,15 +2022,15 @@ namespace Client.Main.Objects
                         cache.LastUpdateFrame = currentFrame;
                         cache.IsValid = true;
 
-                        // Load textures only if needed (avoid redundant loading)
-                        if (_boneTextures[meshIndex] == null || (_invalidatedBufferFlags & BUFFER_FLAG_TEXTURE) != 0)
+                        // PERFORMANCE: Textures are now preloaded in LoadContent - only reload on explicit texture change
+                        if (_boneTextures[meshIndex] == null && (_invalidatedBufferFlags & BUFFER_FLAG_TEXTURE) != 0)
                         {
+                            // This should rarely happen since textures are preloaded in LoadContent
+                            _logger?.LogDebug($"Lazy loading texture for mesh {meshIndex} - this may cause frame stutter");
                             string texturePath = _meshTexturePath[meshIndex]
                                 ?? BMDLoader.Instance.GetTexturePath(Model, mesh.TexturePath);
 
                             _meshTexturePath[meshIndex] = texturePath;
-
-                            // Batch texture loading
                             _boneTextures[meshIndex] = TextureLoader.Instance.GetTexture2D(texturePath);
                             _scriptTextures[meshIndex] = TextureLoader.Instance.GetScript(texturePath);
                             _dataTextures[meshIndex] = TextureLoader.Instance.Get(texturePath);
@@ -1739,7 +2067,8 @@ namespace Client.Main.Objects
 
             // For child objects that link to parent animation OR have ParentBoneLink, always use fresh bone transforms
             // This ensures weapons and accessories animate properly during blending
-            if (LinkParentAnimation || ParentBoneLink >= 0)
+            // Also always use fresh transforms for PlayerObjects to avoid rendering issues
+            if (LinkParentAnimation || ParentBoneLink >= 0 || this is PlayerObject)
             {
                 return bones;
             }
@@ -1796,9 +2125,20 @@ namespace Client.Main.Objects
 
             for (int i = 0; i < Children.Count; i++)
             {
-                if (Children[i] is ModelObject modelObject && (modelObject.LinkParentAnimation || modelObject.ParentBoneLink >= 0))
+                if (Children[i] is not ModelObject modelObject)
+                    continue;
+
+                uint childFlags = flags;
+
+                if ((childFlags & BUFFER_FLAG_TRANSFORM) != 0 &&
+                    (modelObject.LinkParentAnimation || modelObject.ParentBoneLink >= 0))
                 {
-                    modelObject.InvalidateBuffers(flags);
+                    childFlags &= ~BUFFER_FLAG_TRANSFORM;
+                }
+
+                if (childFlags != 0)
+                {
+                    modelObject.InvalidateBuffers(childFlags);
                 }
             }
         }

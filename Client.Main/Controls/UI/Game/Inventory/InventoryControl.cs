@@ -11,6 +11,7 @@ using System;
 using Client.Main.Networking;
 using Client.Main.Core.Utilities;
 using Microsoft.Extensions.Logging;
+using MUnique.OpenMU.Network.Packets;
 
 namespace Client.Main.Controls.UI.Game.Inventory
 {
@@ -55,14 +56,23 @@ namespace Client.Main.Controls.UI.Game.Inventory
         private Texture2D _texBackground; // For msgbox_back
 
         private List<InventoryItem> _items;
+        private Dictionary<byte, InventoryItem> _equippedItems; // visualize equipped items by slot index
         private InventoryItem[,] _itemGrid; // For quick slot occupancy checks
 
         private Point _gridOffset = new Point(50, 80); // Grid offset with 40px margins and centered
+
+        // Grid properties use DynamicLayoutControl coordinate system (no UiScaler scaling)
+        private Point GridOffset => _gridOffset;
+        private int CellWidth => INVENTORY_SQUARE_WIDTH;
+        private int CellHeight => INVENTORY_SQUARE_HEIGHT;
 
         public PickedItemRenderer _pickedItemRenderer;
         private readonly NetworkManager _networkManager;
         private InventoryItem _hoveredItem = null;
         private Point _hoveredSlot = new Point(-1, -1);
+        private int _hoveredEquipSlot = -1;
+        private int _pickedFromEquipSlot = -1;
+        private Point _pickedItemOriginalGrid = new Point(-1, -1);
 
         private SpriteFont _font; // Font for tooltips
 
@@ -87,6 +97,7 @@ namespace Client.Main.Controls.UI.Game.Inventory
         {
             _logger = loggerFactory?.CreateLogger<InventoryControl>();
             _items = new List<InventoryItem>();
+            _equippedItems = new Dictionary<byte, InventoryItem>();
             _networkManager = networkManager;
 
             Visible = false;
@@ -142,10 +153,13 @@ namespace Client.Main.Controls.UI.Game.Inventory
         {
             if (_zenLabel != null && _zenLabel.Status == GameControlStatus.Ready)
             {
-                int gridBottomY = _gridOffset.Y + (Rows * INVENTORY_SQUARE_HEIGHT);
+                // Position ZEN label below equipment area
+                const int equipRows = 2;
+                int gridBottomY = GridOffset.Y + (Rows * CellHeight);
+                int equipAreaBottomY = gridBottomY + 20 + (equipRows * CellHeight);
 
-                _zenLabel.X = _gridOffset.X; // Align with left side of grid
-                _zenLabel.Y = gridBottomY + 10; // 10 pixels below the grid
+                _zenLabel.X = GridOffset.X; // Align with left side of grid
+                _zenLabel.Y = equipAreaBottomY + 10; // 10 pixels below equipment area
             }
         }
 
@@ -207,6 +221,8 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
             UpdateZenLabel();
             RefreshInventoryContent();
+            // Force a UI rebuild from current CharacterState to clear any stale visuals
+            _networkManager?.GetCharacterState()?.RaiseInventoryChanged();
             Visible = true;
             BringToFront();
             Scene.FocusControl = this;
@@ -250,6 +266,7 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
             _items.Clear();
             _itemGrid = new InventoryItem[Columns, Rows];
+            _equippedItems.Clear();
 
             var characterItems = _networkManager.GetCharacterState().GetInventoryItems();
 
@@ -257,7 +274,20 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
             const int InventorySlotOffset = 12; // first inv slot
 
-            foreach (var entry in characterItems)
+            // 1) Equipped items (slots 0..11)
+            foreach (var entry in characterItems.Where(e => e.Key <= 11))
+            {
+                byte slotIndex = entry.Key;
+                byte[] itemData = entry.Value;
+
+                ItemDefinition itemDef = ItemDatabase.GetItemDefinition(itemData) ?? new ItemDefinition(0, ItemDatabase.GetItemName(itemData) ?? "Unknown Item", 1, 1, defaultItemIconTexturePath);
+                var invItem = new InventoryItem(itemDef, Point.Zero, itemData);
+                if (itemData.Length > 2) invItem.Durability = itemData[2];
+                _equippedItems[slotIndex] = invItem;
+            }
+
+            // 2) Inventory grid (slots 12+)
+            foreach (var entry in characterItems.Where(e => e.Key >= 12))
             {
                 byte slotIndex = entry.Key;
                 byte[] itemData = entry.Value;
@@ -432,14 +462,15 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
             base.Update(gameTime);
 
-            Point mousePos = MuGame.Instance.Mouse.Position;
+            Point mousePos = MuGame.Instance.UiMouseState.Position;
             _hoveredItem = null;
             _hoveredSlot = new Point(-1, -1);
+            _hoveredEquipSlot = GetEquipSlotAtScreenPosition(mousePos);
 
             // Window dragging logic
-            bool leftPressed = MuGame.Instance.Mouse.LeftButton == ButtonState.Pressed;
-            bool leftJustPressed = leftPressed && MuGame.Instance.PrevMouseState.LeftButton == ButtonState.Released;
-            bool leftJustReleased = !leftPressed && MuGame.Instance.PrevMouseState.LeftButton == ButtonState.Pressed;
+            bool leftPressed = MuGame.Instance.UiMouseState.LeftButton == ButtonState.Pressed;
+            bool leftJustPressed = leftPressed && MuGame.Instance.PrevUiMouseState.LeftButton == ButtonState.Released;
+            bool leftJustReleased = !leftPressed && MuGame.Instance.PrevUiMouseState.LeftButton == ButtonState.Pressed;
 
             if (leftJustPressed && IsMouseOverDragArea() && !_isDragging)
             {
@@ -472,7 +503,7 @@ namespace Client.Main.Controls.UI.Game.Inventory
                 Y = mousePos.Y - _dragOffset.Y;
             }
 
-            // Picking up/dropping logic (only if not dragging window)
+            // Picking up/dropping logic within inventory (only if not dragging window)
             if (IsMouseOver && !_isDragging) // Checks if mouse is over the entire InventoryControl
             {
                 Point gridSlot = GetSlotAtScreenPosition(mousePos);
@@ -489,20 +520,222 @@ namespace Client.Main.Controls.UI.Game.Inventory
                             if (CanPlaceItem(_pickedItemRenderer.Item, gridSlot))
                             {
                                 InventoryItem itemToPlace = _pickedItemRenderer.Item;
+                                // If dropping on the same slot as originally picked, treat as no-op (no server call)
+                                if (_pickedItemOriginalGrid.X >= 0 && gridSlot == _pickedItemOriginalGrid)
+                                {
+                                    itemToPlace.GridPosition = gridSlot;
+                                    AddItem(itemToPlace);
+                                    _pickedItemRenderer.ReleaseItem();
+                                    _pickedItemOriginalGrid = new Point(-1, -1);
+                                    return; // No further processing
+                                }
+
+                                // Compute from/to slot indices for server
+                                const int inventorySlotOffset = 12;
+                                byte fromSlot = 0;
+                                if (_pickedItemOriginalGrid.X >= 0)
+                                {
+                                    fromSlot = (byte)(inventorySlotOffset + (_pickedItemOriginalGrid.Y * Columns) + _pickedItemOriginalGrid.X);
+                                }
+                                else if (_pickedFromEquipSlot >= 0)
+                                {
+                                    fromSlot = (byte)_pickedFromEquipSlot;
+                                }
+                                byte toSlot = (byte)(inventorySlotOffset + (gridSlot.Y * Columns) + gridSlot.X);
+
                                 itemToPlace.GridPosition = gridSlot;
                                 AddItem(itemToPlace); // Adds to _items and _itemGrid
+                                // Send move request to server (inventory -> inventory)
+                                if (_networkManager != null)
+                                {
+                                    var svc = _networkManager.GetCharacterService();
+                                    var version = _networkManager.TargetVersion;
+                                    var raw = itemToPlace.RawData ?? Array.Empty<byte>();
+                                    // Stash the pending move so the handler can update CharacterState precisely on server response
+                                    var state = _networkManager.GetCharacterState();
+                                    state.StashPendingInventoryMove(fromSlot, toSlot);
+                                    _ = System.Threading.Tasks.Task.Run(async () =>
+                                    {
+                                        await svc.SendItemMoveRequestAsync(fromSlot, toSlot, version, raw);
+                                        // Optimistic UI fallback: if no server response within 1200ms, refresh UI back to state
+                                        await System.Threading.Tasks.Task.Delay(1200);
+                                        if (_networkManager != null && state.IsInventoryMovePending(fromSlot, toSlot))
+                                        {
+                                            MuGame.ScheduleOnMainThread(() => state.RaiseInventoryChanged());
+                                        }
+                                    });
+                                }
                                 _pickedItemRenderer.ReleaseItem();
+                                _pickedItemOriginalGrid = new Point(-1, -1);
+                                _pickedFromEquipSlot = -1;
                             }
                             // If cannot drop, the item remains picked up
                         }
                         else if (_hoveredItem != null) // We don't have a picked up item -> trying to pick up
                         {
                             _pickedItemRenderer.PickUpItem(_hoveredItem);
+                            _pickedItemOriginalGrid = _hoveredItem.GridPosition;
                             RemoveItemFromGrid(_hoveredItem);
                             _items.Remove(_hoveredItem);
                             _hoveredItem = null; // No longer hovering over it, because it's picked up
+                            _pickedFromEquipSlot = -1;
                         }
                     }
+                }
+                else if (_hoveredEquipSlot >= 0)
+                {
+                    if (leftJustPressed)
+                    {
+                        if (_pickedItemRenderer.Item != null)
+                        {
+                            // Drop to equipment
+                            var itemToPlace = _pickedItemRenderer.Item;
+                            const int inventorySlotOffset = 12;
+                            byte fromSlot = 0;
+                            if (_pickedItemOriginalGrid.X >= 0)
+                                fromSlot = (byte)(inventorySlotOffset + (_pickedItemOriginalGrid.Y * Columns) + _pickedItemOriginalGrid.X);
+                            else if (_pickedFromEquipSlot >= 0)
+                                fromSlot = (byte)_pickedFromEquipSlot;
+                            byte toSlot = (byte)_hoveredEquipSlot;
+
+                            _equippedItems[toSlot] = itemToPlace; // optimistic
+
+                            if (_networkManager != null)
+                            {
+                                var svc = _networkManager.GetCharacterService();
+                                var version = _networkManager.TargetVersion;
+                                var raw = itemToPlace.RawData ?? Array.Empty<byte>();
+                                var state = _networkManager.GetCharacterState();
+                                state.StashPendingInventoryMove(fromSlot, toSlot);
+                                _ = System.Threading.Tasks.Task.Run(async () =>
+                                {
+                                    await svc.SendItemMoveRequestAsync(fromSlot, toSlot, version, raw);
+                                    await System.Threading.Tasks.Task.Delay(1200);
+                                    if (_networkManager != null && state.IsInventoryMovePending(fromSlot, toSlot))
+                                    {
+                                        MuGame.ScheduleOnMainThread(() => state.RaiseInventoryChanged());
+                                    }
+                                });
+                            }
+
+                            _pickedItemRenderer.ReleaseItem();
+                            _pickedItemOriginalGrid = new Point(-1, -1);
+                            _pickedFromEquipSlot = -1;
+                        }
+                        else
+                        {
+                            // Pick from equipment
+                            if (_equippedItems.TryGetValue((byte)_hoveredEquipSlot, out var eqItem))
+                            {
+                                _pickedItemRenderer.PickUpItem(eqItem);
+                                _equippedItems.Remove((byte)_hoveredEquipSlot);
+                                _pickedFromEquipSlot = _hoveredEquipSlot;
+                                _pickedItemOriginalGrid = new Point(-1, -1);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // If we released the mouse while dragging an item OUTSIDE of the inventory grid,
+            // decide if we sell to NPC shop (when open and under cursor) or drop to terrain otherwise.
+            if (leftJustReleased && _pickedItemRenderer.Item != null && !_isDragging && !IsMouseOverGrid())
+            {
+                var item = _pickedItemRenderer.Item;
+                // Compute the original inventory slot index (server indexing starts at 12)
+                const int inventorySlotOffset = 12;
+                byte slotIndex = (byte)(inventorySlotOffset + (item.GridPosition.Y * Columns) + item.GridPosition.X);
+
+                // Check if the cursor is over an open NPC shop -> SELL
+                var shop = Client.Main.Controls.UI.Game.NpcShopControl.Instance;
+                if (shop != null && shop.Visible && shop.DisplayRectangle.Contains(MuGame.Instance.UiMouseState.Position) && _networkManager != null)
+                {
+                    var svc = _networkManager.GetCharacterService();
+                    _networkManager.GetCharacterState().StashPendingSellSlot(slotIndex);
+                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    {
+                        await svc.SendSellItemToNpcRequestAsync(slotIndex);
+                        await System.Threading.Tasks.Task.Delay(1200);
+                        var state = _networkManager.GetCharacterState();
+                        // If item still present at slot, raise refresh to resync
+                        if (state.HasInventoryItem(slotIndex))
+                        {
+                            MuGame.ScheduleOnMainThread(() => state.RaiseInventoryChanged());
+                        }
+                    });
+
+                    _pickedItemRenderer.ReleaseItem();
+                    _pickedItemOriginalGrid = new Point(-1, -1);
+                }
+                // Otherwise, check if cursor is over Vault -> move Inventory -> Vault
+                else if (Client.Main.Controls.UI.Game.VaultControl.Instance is { } vault && vault.Visible && vault.DisplayRectangle.Contains(MuGame.Instance.UiMouseState.Position) && _networkManager != null)
+                {
+                    var drop = vault.GetSlotAtScreenPosition(MuGame.Instance.UiMouseState.Position);
+                    if (drop.X >= 0 && vault.CanPlaceAt(drop, item))
+                    {
+                        byte toSlot = (byte)(drop.Y * 8 + drop.X); // vault is 8 columns
+                        var svc = _networkManager.GetCharacterService();
+                        var raw = item.RawData ?? Array.Empty<byte>();
+                        // Stash a self-referencing inventory move so we can restore on failure (server 0x24 fail)
+                        var state = _networkManager.GetCharacterState();
+                        state.StashPendingInventoryMove(slotIndex, slotIndex);
+                        _ = System.Threading.Tasks.Task.Run(async () =>
+                        {
+                            await svc.SendStorageItemMoveAsync(ItemStorageKind.Inventory, slotIndex, ItemStorageKind.Vault, toSlot, _networkManager.TargetVersion, raw);
+                            // Optimistic fallback: if no server response in time, force refresh
+                            await System.Threading.Tasks.Task.Delay(1200);
+                            if (_networkManager != null && state.IsInventoryMovePending(slotIndex, slotIndex))
+                            {
+                                MuGame.ScheduleOnMainThread(() =>
+                                {
+                                    state.RaiseInventoryChanged();
+                                    state.RaiseVaultItemsChanged();
+                                });
+                            }
+                        });
+                        _pickedItemRenderer.ReleaseItem();
+                        _pickedItemOriginalGrid = new Point(-1, -1);
+                    }
+                    else
+                    {
+                        // invalid target, restore item back to inventory UI
+                        AddItem(item);
+                        // Force a small resync to clear any stale visuals
+                        _networkManager?.GetCharacterState()?.RaiseInventoryChanged();
+                        _pickedItemRenderer.ReleaseItem();
+                        _pickedItemOriginalGrid = new Point(-1, -1);
+                    }
+                }
+                // Otherwise, drop to terrain
+                else if (Scene?.World is Controls.WalkableWorldControl world && _networkManager != null)
+                {
+                    byte tileX = world.MouseTileX;
+                    byte tileY = world.MouseTileY;
+                    // Fire-and-forget send; server will handle success/failure and update inventory accordingly.
+                    // Add optimistic UI fallback to refresh inventory if no ACK arrives.
+                    _ = System.Threading.Tasks.Task.Run(async () =>
+                    {
+                        var svc = _networkManager.GetCharacterService();
+                        await svc.SendDropItemRequestAsync(tileX, tileY, slotIndex);
+                        await System.Threading.Tasks.Task.Delay(1200);
+                        // If item still present at slot, force refresh to show it back
+                        var state = _networkManager.GetCharacterState();
+                        if (state.HasInventoryItem(slotIndex))
+                        {
+                            MuGame.ScheduleOnMainThread(() => state.RaiseInventoryChanged());
+                        }
+                    });
+
+                    // We already removed the item from the UI grid when it was picked up; just clear the picked state
+                    _pickedItemRenderer.ReleaseItem();
+                    _pickedItemOriginalGrid = new Point(-1, -1);
+                }
+                else
+                {
+                    // No world or network available - revert the item back into the inventory UI
+                    AddItem(item);
+                    _pickedItemRenderer.ReleaseItem();
+                    _pickedItemOriginalGrid = new Point(-1, -1);
                 }
             }
 
@@ -513,7 +746,12 @@ namespace Client.Main.Controls.UI.Game.Inventory
         {
             if (_networkManager != null)
             {
-                _networkManager.GetCharacterState().InventoryChanged += RefreshInventoryContent;
+                var state = _networkManager.GetCharacterState();
+                state.InventoryChanged += RefreshInventoryContent;
+                state.MoneyChanged += () =>
+                {
+                    ZenAmount = state.InventoryZen; // triggers label update
+                };
             }
         }
 
@@ -522,19 +760,19 @@ namespace Client.Main.Controls.UI.Game.Inventory
             if (DisplayRectangle.Width <= 0 || DisplayRectangle.Height <= 0)
                 return new Point(-1, -1);
 
-            Point localPos = new Point(screenPos.X - DisplayRectangle.X - _gridOffset.X,
-                                       screenPos.Y - DisplayRectangle.Y - _gridOffset.Y);
+            Point localPos = new Point(screenPos.X - DisplayRectangle.X - GridOffset.X,
+                                       screenPos.Y - DisplayRectangle.Y - GridOffset.Y);
 
             if (localPos.X < 0 || localPos.Y < 0 ||
-                localPos.X >= Columns * INVENTORY_SQUARE_WIDTH ||
-                localPos.Y >= Rows * INVENTORY_SQUARE_HEIGHT)
+                localPos.X >= Columns * CellWidth ||
+                localPos.Y >= Rows * CellHeight)
             {
                 return new Point(-1, -1); // Outside grid
             }
 
             return new Point(
-                Math.Min(Columns - 1, localPos.X / INVENTORY_SQUARE_WIDTH),
-                Math.Min(Rows - 1, localPos.Y / INVENTORY_SQUARE_HEIGHT)
+                Math.Min(Columns - 1, localPos.X / CellWidth),
+                Math.Min(Rows - 1, localPos.Y / CellHeight)
             );
         }
 
@@ -547,15 +785,139 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
             Rectangle displayRect = DisplayRectangle;
 
-            using (new SpriteBatchScope(GraphicsManager.Instance.Sprite, SpriteSortMode.Deferred, BlendState.AlphaBlend))
+            using (new SpriteBatchScope(GraphicsManager.Instance.Sprite, SpriteSortMode.Deferred, BlendState.AlphaBlend, transform: UiScaler.SpriteTransform))
             {
                 // Draw custom inventory elements on top
                 DrawFrame(GraphicsManager.Instance.Sprite, displayRect);
+                DrawEquippedArea(GraphicsManager.Instance.Sprite, displayRect);
                 DrawGrid(GraphicsManager.Instance.Sprite, displayRect);
                 DrawItems(GraphicsManager.Instance.Sprite, displayRect);
-                _pickedItemRenderer.Draw(GraphicsManager.Instance.Sprite, gameTime);
+                // Drag preview is drawn globally in GameScene to ensure top-most z-order
                 DrawDragArea(GraphicsManager.Instance.Sprite, displayRect);
                 DrawTooltip(GraphicsManager.Instance.Sprite, displayRect);
+            }
+        }
+
+        private static readonly Dictionary<byte, Point> _equipLayout = new()
+        {
+            { 0, new Point(0,0) }, // Left hand
+            { 2, new Point(1,0) }, // Helm
+            { 3, new Point(2,0) }, // Armor
+            { 1, new Point(3,0) }, // Right hand
+            { 7, new Point(4,0) }, // Wings
+            { 9, new Point(5,0) }, // Pendant
+
+            { 8, new Point(0,1) }, // Pet
+            { 5, new Point(1,1) }, // Gloves
+            { 4, new Point(2,1) }, // Pants
+            { 6, new Point(3,1) }, // Boots
+            { 10,new Point(4,1) }, // Ring 1
+            { 11,new Point(5,1) }, // Ring 2
+        };
+
+        private Point GetEquipAreaTopLeft()
+        {
+            const int equipRows = 2;
+            // Move equipment area to bottom of inventory grid with some padding
+            int gridBottomY = DisplayRectangle.Y + GridOffset.Y + (Rows * CellHeight);
+            return new Point(DisplayRectangle.X + GridOffset.X,
+                             gridBottomY + 20); // 20px padding below the grid
+        }
+
+        private int GetEquipSlotAtScreenPosition(Point screenPos)
+        {
+            var equipTopLeft = GetEquipAreaTopLeft();
+            foreach (var kv in _equipLayout)
+            {
+                var cell = kv.Value;
+                var slotRect = new Rectangle(
+                    equipTopLeft.X + cell.X * CellWidth,
+                    equipTopLeft.Y + cell.Y * CellHeight,
+                    CellWidth,
+                    CellHeight);
+                if (slotRect.Contains(screenPos))
+                    return kv.Key;
+            }
+            return -1;
+        }
+
+        private void DrawEquippedArea(SpriteBatch spriteBatch, Rectangle frameRect)
+        {
+            const int equipCols = 6;
+            const int equipRows = 2;
+            Point equipTopLeft = GetEquipAreaTopLeft();
+
+            // Background panel
+            var panelRect = new Rectangle(
+                equipTopLeft.X - 8,
+                equipTopLeft.Y - 14,
+                equipCols * CellWidth + 16,
+                equipRows * CellHeight + 24);
+            spriteBatch.Draw(GraphicsManager.Instance.Pixel, panelRect, new Color(8, 8, 8, 180));
+            // Border
+            spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(panelRect.X, panelRect.Y, panelRect.Width, 1), Color.Black * 0.6f);
+            spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(panelRect.X, panelRect.Bottom - 1, panelRect.Width, 1), Color.Black * 0.6f);
+            spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(panelRect.X, panelRect.Y, 1, panelRect.Height), Color.Black * 0.6f);
+            spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(panelRect.Right - 1, panelRect.Y, 1, panelRect.Height), Color.Black * 0.6f);
+
+            // Draw backgrounds for equipment slots
+            foreach (var kv in _equipLayout)
+            {
+                var cell = kv.Value;
+                Rectangle slotRect = new Rectangle(
+                    equipTopLeft.X + cell.X * CellWidth,
+                    equipTopLeft.Y + cell.Y * CellHeight,
+                    CellWidth,
+                    CellHeight);
+
+                if (_slotTexture != null)
+                {
+                    Rectangle sourceRect = new Rectangle(546, 220, 29, 29);
+                    spriteBatch.Draw(_slotTexture, slotRect, sourceRect, Color.White);
+                }
+                else
+                {
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, slotRect, Color.DarkSlateGray * 0.3f);
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(slotRect.X, slotRect.Y, slotRect.Width, 1), Color.Gray * 0.8f);
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(slotRect.X, slotRect.Bottom - 1, slotRect.Width, 1), Color.Gray * 0.8f);
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(slotRect.X, slotRect.Y, 1, slotRect.Height), Color.Gray * 0.8f);
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, new Rectangle(slotRect.Right - 1, slotRect.Y, 1, slotRect.Height), Color.Gray * 0.8f);
+                }
+            }
+
+            // Draw equipped item icons
+            foreach (var kv in _equippedItems)
+            {
+                if (!_equipLayout.TryGetValue(kv.Key, out var cell)) continue;
+                var item = kv.Value;
+                Rectangle itemRect = new Rectangle(
+                    equipTopLeft.X + cell.X * CellWidth,
+                    equipTopLeft.Y + cell.Y * CellHeight,
+                    CellWidth,
+                    CellHeight);
+
+                Texture2D itemTexture = null;
+                if (!string.IsNullOrEmpty(item.Definition.TexturePath))
+                {
+                    itemTexture = TextureLoader.Instance.GetTexture2D(item.Definition.TexturePath);
+                    if (itemTexture == null && item.Definition.TexturePath.EndsWith(".bmd", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            itemTexture = BmdPreviewRenderer.GetPreview(item.Definition, itemRect.Width, itemRect.Height);
+                        }
+                        catch { }
+                    }
+                }
+
+                if (itemTexture != null)
+                {
+                    spriteBatch.Draw(itemTexture, itemRect, Color.White);
+                }
+                else
+                {
+                    spriteBatch.Draw(GraphicsManager.Instance.Pixel, itemRect, new Color(40,40,40,200));
+                }
             }
         }
 
@@ -595,17 +957,17 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
         private void DrawGrid(SpriteBatch spriteBatch, Rectangle frameRect)
         {
-            Point gridTopLeft = new Point(DisplayRectangle.X + _gridOffset.X, DisplayRectangle.Y + _gridOffset.Y);
+            Point gridTopLeft = new Point(DisplayRectangle.X + GridOffset.X, DisplayRectangle.Y + GridOffset.Y);
 
             for (int y = 0; y < Rows; y++)
             {
                 for (int x = 0; x < Columns; x++)
                 {
                     Rectangle slotRect = new Rectangle(
-                        gridTopLeft.X + x * INVENTORY_SQUARE_WIDTH,
-                        gridTopLeft.Y + y * INVENTORY_SQUARE_HEIGHT,
-                        INVENTORY_SQUARE_WIDTH,
-                        INVENTORY_SQUARE_HEIGHT);
+                        gridTopLeft.X + x * CellWidth,
+                        gridTopLeft.Y + y * CellHeight,
+                        CellWidth,
+                        CellHeight);
 
                     if (_slotTexture != null)
                     {
@@ -624,17 +986,18 @@ namespace Client.Main.Controls.UI.Game.Inventory
                     }
 
                     // Highlight for drag & drop - uses original slotRect
-                    if (_pickedItemRenderer.Item != null && IsMouseOverGrid())
+                    var dragged = _pickedItemRenderer.Item ?? Client.Main.Controls.UI.Game.VaultControl.Instance?.GetDraggedItem();
+                    if (dragged != null && IsMouseOverGrid())
                     {
                         Point currentSlot = new Point(x, y);
-                        Color? highlightColor = GetSlotHighlightColor(currentSlot, _pickedItemRenderer.Item);
+                        Color? highlightColor = GetSlotHighlightColor(currentSlot, dragged);
 
                         if (highlightColor.HasValue)
                         {
                             spriteBatch.Draw(GraphicsManager.Instance.Pixel, slotRect, highlightColor.Value);
                         }
                     }
-                    else if (IsMouseOverGrid() && _pickedItemRenderer.Item == null)
+                    else if (IsMouseOverGrid() && dragged == null)
                     {
                         // Highlight hovered slot
                         if (_hoveredSlot.X == x && _hoveredSlot.Y == y)
@@ -718,18 +1081,22 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
         private bool IsMouseOverGrid()
         {
-            Point mousePos = MuGame.Instance.Mouse.Position;
+            Point mousePos = MuGame.Instance.UiMouseState.Position;
             Rectangle gridScreenRect = new Rectangle(
-                DisplayRectangle.X + _gridOffset.X,
-                DisplayRectangle.Y + _gridOffset.Y,
-                Columns * INVENTORY_SQUARE_WIDTH,
-                Rows * INVENTORY_SQUARE_HEIGHT);
+                DisplayRectangle.X + GridOffset.X,
+                DisplayRectangle.Y + GridOffset.Y,
+                Columns * CellWidth,
+                Rows * CellHeight);
             return gridScreenRect.Contains(mousePos);
         }
 
+        // Public helpers for other controls (e.g., Vault)
+        public Point GetSlotAtScreenPositionPublic(Point screenPos) => GetSlotAtScreenPosition(screenPos);
+        public bool CanPlaceAt(Point gridSlot, InventoryItem item) => CanPlaceItem(item, gridSlot);
+
         private bool IsMouseOverDragArea()
         {
-            Point mousePos = MuGame.Instance.Mouse.Position;
+            Point mousePos = MuGame.Instance.UiMouseState.Position;
             int dragAreaHeight = DisplayRectangle.Height / 10; // Top 1/10 of window
             Rectangle dragRect = new Rectangle(
                 DisplayRectangle.X,
@@ -750,7 +1117,7 @@ namespace Client.Main.Controls.UI.Game.Inventory
 
         private void DrawItems(SpriteBatch spriteBatch, Rectangle frameRect)
         {
-            Point gridTopLeft = new Point(DisplayRectangle.X + _gridOffset.X, DisplayRectangle.Y + _gridOffset.Y);
+            Point gridTopLeft = new Point(DisplayRectangle.X + GridOffset.X, DisplayRectangle.Y + GridOffset.Y);
             var font = GraphicsManager.Instance.Font;
 
             foreach (var item in _items)
@@ -758,10 +1125,10 @@ namespace Client.Main.Controls.UI.Game.Inventory
                 if (item == _pickedItemRenderer.Item) continue;
 
                 Rectangle itemRect = new Rectangle(
-                    gridTopLeft.X + item.GridPosition.X * INVENTORY_SQUARE_WIDTH,
-                    gridTopLeft.Y + item.GridPosition.Y * INVENTORY_SQUARE_HEIGHT,
-                    item.Definition.Width * INVENTORY_SQUARE_WIDTH,
-                    item.Definition.Height * INVENTORY_SQUARE_HEIGHT);
+                    gridTopLeft.X + item.GridPosition.X * CellWidth,
+                    gridTopLeft.Y + item.GridPosition.Y * CellHeight,
+                    item.Definition.Width * CellWidth,
+                    item.Definition.Height * CellHeight);
 
                 Texture2D itemTexture = null;
                 if (!string.IsNullOrEmpty(item.Definition.TexturePath))
@@ -772,8 +1139,8 @@ namespace Client.Main.Controls.UI.Game.Inventory
                     {
                         try
                         {
-                            int w = item.Definition.Width * INVENTORY_SQUARE_WIDTH;
-                            int h = item.Definition.Height * INVENTORY_SQUARE_HEIGHT;
+                            int w = item.Definition.Width * CellWidth;
+                            int h = item.Definition.Height * CellHeight;
 
                             // Use animated preview for hovered items
                             if (item == _hoveredItem)
@@ -932,18 +1299,18 @@ namespace Client.Main.Controls.UI.Game.Inventory
             }
             w += 12; h += 8;
 
-            Point m = MuGame.Instance.Mouse.Position;
+            Point m = MuGame.Instance.UiMouseState.Position;
 
             // Get screen bounds
-            Rectangle screenBounds = MuGame.Instance.GraphicsDevice.Viewport.Bounds;
+            Rectangle screenBounds = new Rectangle(0, 0, UiScaler.VirtualSize.X, UiScaler.VirtualSize.Y);
 
             // Calculate hovered item screen position to avoid covering it
-            Point gridTopLeft = new Point(DisplayRectangle.X + _gridOffset.X, DisplayRectangle.Y + _gridOffset.Y);
+            Point gridTopLeft = new Point(DisplayRectangle.X + GridOffset.X, DisplayRectangle.Y + GridOffset.Y);
             Rectangle hoveredItemRect = new Rectangle(
-                gridTopLeft.X + _hoveredItem.GridPosition.X * INVENTORY_SQUARE_WIDTH,
-                gridTopLeft.Y + _hoveredItem.GridPosition.Y * INVENTORY_SQUARE_HEIGHT,
-                _hoveredItem.Definition.Width * INVENTORY_SQUARE_WIDTH,
-                _hoveredItem.Definition.Height * INVENTORY_SQUARE_HEIGHT);
+                gridTopLeft.X + _hoveredItem.GridPosition.X * CellWidth,
+                gridTopLeft.Y + _hoveredItem.GridPosition.Y * CellHeight,
+                _hoveredItem.Definition.Width * CellWidth,
+                _hoveredItem.Definition.Height * CellHeight);
 
             // Start with tooltip to the right of the cursor
             Rectangle r = new(m.X + 15, m.Y + 15, w, h);

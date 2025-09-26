@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using Client.Main.Controllers;
+using Client.Main.Content;
 using Client.Main.Models;
 using Microsoft.Xna.Framework;
 
@@ -16,6 +17,7 @@ namespace Client.Main.Controls.UI
         private LabelControl _tileFlagsLabel;
         private LabelControl _performanceMetricsLabel;
         private LabelControl _objectMetricsLabel; // New label for object metrics
+        private LabelControl _bmdMetricsLabel;    // New label for BMD buffer metrics
         private double _updateTimer = 0;
         private const double UPDATE_INTERVAL_MS = 100; // 100ms
         private StringBuilder _sb = new StringBuilder(250); // Increased capacity
@@ -25,7 +27,7 @@ namespace Client.Main.Controls.UI
             Align = ControlAlign.Top | ControlAlign.Right;
             Margin = new Margin { Top = 10, Right = 10 };
             Padding = new Margin { Top = 15, Left = 15 };
-            ControlSize = new Point(280, 200); // Increased size for new labels
+            ControlSize = new Point(300, 240); // Increased size for new labels (BMD metrics)
             BackgroundColor = Color.Black * 0.6f;
             BorderColor = Color.White * 0.3f;
             BorderThickness = 2;
@@ -43,6 +45,7 @@ namespace Client.Main.Controls.UI
             Controls.Add(_tileFlagsLabel = new LabelControl { Text = "Tile Flags: {0}", TextColor = Color.Lime, X = posX, Y = posY += labelHeight });
             Controls.Add(_performanceMetricsLabel = new LabelControl { Text = "Perf: {0}", TextColor = Color.OrangeRed, X = posX, Y = posY += labelHeight });
             Controls.Add(_objectMetricsLabel = new LabelControl { Text = "Objects: {0}", TextColor = Color.LightCyan, X = posX, Y = posY += labelHeight });
+            Controls.Add(_bmdMetricsLabel = new LabelControl { Text = "BMD: {0}", TextColor = Color.LightSkyBlue, X = posX, Y = posY += labelHeight });
         }
 
         public override void Update(GameTime gameTime)
@@ -60,8 +63,12 @@ namespace Client.Main.Controls.UI
                 _sb.Clear().Append("FPS: ").Append((int)FPSCounter.Instance.FPS_AVG);
                 _fpsLabel.Text = _sb.ToString();
 
-                _sb.Clear().Append("Mouse Position - X: ").Append(MuGame.Instance.Mouse.Position.X)
-                   .Append(", Y:").Append(MuGame.Instance.Mouse.Position.Y);
+                Point screenMouse = MuGame.Instance.Mouse.Position;
+                Point uiMouse = MuGame.Instance.UiMouseState.Position;
+                _sb.Clear().Append("Mouse Screen (X:").Append(screenMouse.X)
+                   .Append(", Y:").Append(screenMouse.Y)
+                   .Append(") UI (X:").Append(uiMouse.X)
+                   .Append(", Y:").Append(uiMouse.Y).Append(')');
                 _mousePosLabel.Text = _sb.ToString();
 
                 _sb.Clear().Append("FXAA: ").Append(GraphicsManager.Instance.IsFXAAEnabled ? "ON" : "OFF")
@@ -78,6 +85,7 @@ namespace Client.Main.Controls.UI
                     _tileFlagsLabel.Visible = true;
                     _performanceMetricsLabel.Visible = true;
                     _objectMetricsLabel.Visible = true; // Show object metrics label
+                    _bmdMetricsLabel.Visible = true;
 
                     _sb.Clear().Append("Player Cords - X: ").Append(walkableWorld.Walker.Location.X)
                        .Append(", Y:").Append(walkableWorld.Walker.Location.Y);
@@ -105,6 +113,14 @@ namespace Client.Main.Controls.UI
                     var objectMetrics = walkableWorld.ObjectMetrics;
                     _sb.Clear().Append($"Objects: Drw:{objectMetrics.DrawnTotal}/{objectMetrics.TotalObjects} (Culled:{objectMetrics.CulledByFrustum})");
                     _objectMetricsLabel.Text = _sb.ToString();
+
+                    // Update BMD buffer metrics
+                    var bmd = BMDLoader.Instance;
+                    _sb.Clear()
+                      .Append($"BMD: VB:{bmd.LastFrameVBUpdates} IB:{bmd.LastFrameIBUploads} ")
+                      .Append($"Vtx:{bmd.LastFrameVerticesTransformed} Mesh:{bmd.LastFrameMeshesProcessed} ")
+                      .Append($"Cache:{bmd.LastFrameCacheHits}/{bmd.LastFrameCacheMisses}");
+                    _bmdMetricsLabel.Text = _sb.ToString();
                 }
                 else
                 {
@@ -113,6 +129,7 @@ namespace Client.Main.Controls.UI
                     _tileFlagsLabel.Visible = false;
                     _performanceMetricsLabel.Visible = false;
                     _objectMetricsLabel.Visible = false; // Hide object metrics label
+                    _bmdMetricsLabel.Visible = false;
                 }
             }
         }

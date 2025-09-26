@@ -31,6 +31,7 @@ namespace Client.Main.Objects.Player
 
     public class PlayerObject : WalkerObject
     {
+        protected override bool RequiresPerFrameAnimation => IsMainWalker;
         private CharacterClassNumber _characterClass;
         // Cached gender flag – avoids evaluating gender every frame
         private bool _isFemale;
@@ -44,6 +45,8 @@ namespace Client.Main.Objects.Player
         public WeaponObject Weapon1 { get; private set; }
         public WeaponObject Weapon2 { get; private set; }
         public WingObject EquippedWings { get; private set; }
+
+        private int _lastEquipmentAnimationStride = -1;
 
         // Timer for footstep sound playback
         private float _footstepTimer;
@@ -123,7 +126,7 @@ namespace Client.Main.Objects.Player
             BoundingBoxLocal = new BoundingBox(new Vector3(-40, -40, 0), new Vector3(40, 40, 120));
 
             Scale = 0.85f;
-            AnimationSpeed = 5f;
+            AnimationSpeed = 10f;
             CurrentAction = PlayerAction.PlayerStopMale;
             _characterClass = CharacterClassNumber.DarkWizard;
             _isFemale = PlayerActionMapper.IsCharacterFemale(_characterClass);
@@ -173,7 +176,8 @@ namespace Client.Main.Objects.Player
         {
             if (_networkManager != null)
             {
-                _networkManager.GetCharacterState().InventoryChanged += OnInventoryChanged;
+                // Subscribe to equipment-only changes to avoid reloading on pure inventory grid moves
+                _networkManager.GetCharacterState().EquipmentChanged += OnEquipmentChanged;
             }
         }
 
@@ -182,7 +186,7 @@ namespace Client.Main.Objects.Player
             if (_networkManager == null) return;
             try
             {
-                _networkManager.GetCharacterState().InventoryChanged -= OnInventoryChanged;
+                _networkManager.GetCharacterState().EquipmentChanged -= OnEquipmentChanged;
             }
             catch (Exception ex)
             {
@@ -190,7 +194,7 @@ namespace Client.Main.Objects.Player
             }
         }
 
-        private void OnInventoryChanged()
+        private void OnEquipmentChanged()
         {
             if (!IsMainWalker) return;
             // Fire-and-forget the async update method
@@ -225,6 +229,7 @@ namespace Client.Main.Objects.Player
             }
 
             // ALWAYS load the default class-specific body parts first.
+            // This will clear shader properties and load defaults
             await UpdateBodyPartClassesAsync();
 
             ItemDefinition GetItemDef(byte slot)
@@ -487,6 +492,8 @@ namespace Client.Main.Objects.Player
         {
             base.Update(gameTime); // movement, camera for main walker, etc.
 
+            UpdateEquipmentAnimationStride();
+
             if (World is not WalkableWorldControl world)
                 return;
 
@@ -494,6 +501,32 @@ namespace Client.Main.Objects.Player
                 UpdateLocalPlayer(world, gameTime);
             else
                 UpdateRemotePlayer(world, gameTime);
+        }
+
+        private void UpdateEquipmentAnimationStride()
+        {
+            int desiredStride = 1;
+
+            if (!IsMainWalker)
+            {
+                desiredStride = LowQuality ? 4 : 2;
+            }
+
+            if (_lastEquipmentAnimationStride == desiredStride)
+                return;
+
+            SetAnimationUpdateStride(desiredStride);
+            HelmMask?.SetAnimationUpdateStride(desiredStride);
+            Helm?.SetAnimationUpdateStride(desiredStride);
+            Armor?.SetAnimationUpdateStride(desiredStride);
+            Pants?.SetAnimationUpdateStride(desiredStride);
+            Gloves?.SetAnimationUpdateStride(desiredStride);
+            Boots?.SetAnimationUpdateStride(desiredStride);
+            Weapon1?.SetAnimationUpdateStride(desiredStride);
+            Weapon2?.SetAnimationUpdateStride(desiredStride);
+            EquippedWings?.SetAnimationUpdateStride(desiredStride);
+
+            _lastEquipmentAnimationStride = desiredStride;
         }
 
         // --------------- Helpers for correct animation selection ----------------
@@ -866,6 +899,13 @@ namespace Client.Main.Objects.Player
 
         public async Task UpdateBodyPartClassesAsync()
         {
+            // Clear shader properties from all body parts before loading defaults
+            ClearItemProperties(Helm);
+            ClearItemProperties(Armor);
+            ClearItemProperties(Pants);
+            ClearItemProperties(Gloves);
+            ClearItemProperties(Boots);
+            
             PlayerClass mapped = MapNetworkClassToModelClass(_characterClass);
             await SetBodyPartsAsync("Player/",
                 "HelmClass", "ArmorClass", "PantClass", "GloveClass", "BootClass",
@@ -875,6 +915,9 @@ namespace Client.Main.Objects.Player
         private async Task ResetBodyPartToClassDefaultAsync(ModelObject bodyPart, string partPrefix)
         {
             Console.WriteLine($"[PlayerObject] ResetBodyPartToClassDefaultAsync called: partPrefix={partPrefix}");
+            
+            // Clear item shader properties first
+            ClearItemProperties(bodyPart);
             
             PlayerClass mapped = MapNetworkClassToModelClass(_characterClass);
             string fileSuffix = ((int)mapped).ToString("D2");
@@ -950,6 +993,8 @@ namespace Client.Main.Objects.Player
                 Camera.Instance.Projection,
                 Camera.Instance.View,
                 Matrix.Identity);
+
+            // Projected coordinates are already in the correct space
 
             if (screen.Z < 0f || screen.Z > 1f)
                 return;
@@ -1030,6 +1075,12 @@ namespace Client.Main.Objects.Player
             _footstepTimer += (float)gameTime.ElapsedGameTime.TotalSeconds;
 
             var mode = GetCurrentMovementMode(world);
+            // Do not play footstep sounds while flying
+            if (mode == MovementMode.Fly)
+            {
+                _footstepTimer = 0f;
+                return;
+            }
             float interval = mode == MovementMode.Swim ? 2.0f : 0.4f;
             if (_footstepTimer < interval)
                 return;
@@ -1147,7 +1198,7 @@ namespace Client.Main.Objects.Player
         /// <summary>
         /// Updates a specific equipment slot based on AppearanceChanged packet data
         /// </summary>
-        public async Task UpdateEquipmentSlotAsync(byte itemSlot, EquipmentSlotData? equipmentData)
+        public async Task UpdateEquipmentSlotAsync(byte itemSlot, EquipmentSlotData equipmentData)
         {
             Console.WriteLine($"[PlayerObject] UpdateEquipmentSlotAsync called: slot={itemSlot}, equipmentData={(equipmentData == null ? "NULL" : "NOT NULL")}");
             _logger?.LogInformation("UpdateEquipmentSlotAsync called: slot={Slot}, equipmentData={Data}", itemSlot, equipmentData == null ? "NULL" : "NOT NULL");
@@ -1362,6 +1413,9 @@ namespace Client.Main.Objects.Player
             part.ItemLevel = 0;
             part.IsExcellentItem = false;
             part.IsAncientItem = false;
+            
+            // Force shader to update by invalidating buffers
+            part.InvalidateBuffers();
         }
     }
 }

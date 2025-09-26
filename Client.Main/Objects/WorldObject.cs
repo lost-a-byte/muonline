@@ -48,6 +48,17 @@ namespace Client.Main.Objects
         private bool _wasOutOfView = true;
         private const int MaxSkipFrames = 15; // Skip up to 15 frames for very distant objects
         
+        // PERFORMANCE: Static bbox indices to avoid per-frame allocation
+        private static readonly int[] BoundingBoxIndices = new int[]
+        {
+            0, 1, 1, 2, 2, 3, 3, 0,
+            4, 5, 5, 6, 6, 7, 7, 4,
+            0, 4, 1, 5, 2, 6, 3, 7
+        };
+        
+        // Reusable vertices for 3D bbox (avoid per-frame allocations)
+        private readonly VertexPositionColor[] _bboxVerts = new VertexPositionColor[8];
+        
         // Static frame counter for staggered updates
         private static int _globalFrameCounter = 0;
         private readonly int _updateOffset; // Unique offset for each object to stagger updates
@@ -183,8 +194,8 @@ namespace Client.Main.Objects
             }
             if (Status != GameControlStatus.Ready) return;
 
-            // Increment global frame counter for staggered updates
-            _globalFrameCounter++;
+            // Increment once per *frame time*, not per object update
+            _globalFrameCounter = (int)(gameTime.TotalGameTime.TotalSeconds * 60.0);
 
             float deltaTime = (float)gameTime.ElapsedGameTime.TotalSeconds;
             
@@ -322,8 +333,10 @@ namespace Client.Main.Objects
                 LowQuality = false;
             }
 
-            // Mouse hover detection optimization - skip for very distant objects
-            bool shouldCheckMouseHover = distanceToCamera < Constants.LOW_QUALITY_DISTANCE * 3f;
+            // Mouse hover detection optimization - skip for distant/out-of-view objects
+            bool withinHoverRange = distanceToCamera < Constants.LOW_QUALITY_DISTANCE * 1.5f;
+            bool inFrustum = withinHoverRange && (Camera.Instance?.Frustum.Contains(BoundingBoxWorld) != ContainmentType.Disjoint);
+            bool shouldCheckMouseHover = inFrustum;
             
             if (shouldCheckMouseHover)
             {
@@ -424,7 +437,9 @@ namespace Client.Main.Objects
             if (screen.Z < 0f || screen.Z > 1f)
                 return;
 
-            const float scale = 0.5f;
+            // Apply render scale to font scale to maintain consistent size
+            const float baseScale = 0.5f;
+            float scale = baseScale * Constants.RENDER_SCALE;
             Vector2 size = _font.MeasureString(name) * scale;
             var sb = GraphicsManager.Instance.Sprite;
 
@@ -538,16 +553,8 @@ namespace Client.Main.Objects
 
             Vector3[] corners = BoundingBoxWorld.GetCorners();
 
-            int[] indices =
-            [
-                0, 1, 1, 2, 2, 3, 3, 0,
-                4, 5, 5, 6, 6, 7, 7, 4,
-                0, 4, 1, 5, 2, 6, 3, 7
-            ];
-
-            var vertexData = new VertexPositionColor[8];
-            for (int i = 0; i < corners.Length; i++)
-                vertexData[i] = new VertexPositionColor(corners[i], BoundingBoxColor);
+            for (int i = 0; i < 8; i++)
+                _bboxVerts[i] = new VertexPositionColor(corners[i], BoundingBoxColor);
 
             GraphicsManager.Instance.BoundingBoxEffect3D.View = Camera.Instance.View;
             GraphicsManager.Instance.BoundingBoxEffect3D.Projection = Camera.Instance.Projection;
@@ -556,7 +563,10 @@ namespace Client.Main.Objects
             foreach (var pass in GraphicsManager.Instance.BoundingBoxEffect3D.CurrentTechnique.Passes)
             {
                 pass.Apply();
-                GraphicsDevice.DrawUserIndexedPrimitives(PrimitiveType.LineList, vertexData, 0, 8, indices, 0, indices.Length / 2);
+                GraphicsDevice.DrawUserIndexedPrimitives(
+                    PrimitiveType.LineList,
+                    _bboxVerts, 0, 8,
+                    BoundingBoxIndices, 0, BoundingBoxIndices.Length / 2);
             }
 
             GraphicsDevice.DepthStencilState = previousDepthState;
@@ -579,27 +589,23 @@ namespace Client.Main.Objects
             sbInfo.Append("DepthStencilState: ").Append(DepthState.Name);
             string objectInfo = sbInfo.ToString();
 
-            float scaleFactor = DebugFontSize / Constants.BASE_FONT_SIZE;
+            float scaleFactor = DebugFontSize / Constants.BASE_FONT_SIZE * Constants.RENDER_SCALE;
             Vector2 textSize = _font.MeasureString(objectInfo) * scaleFactor;
+
+            Vector3 projectedPos = GraphicsDevice.Viewport.Project(
+                new Vector3(
+                    (BoundingBoxWorld.Min.X + BoundingBoxWorld.Max.X) / 2,
+                    BoundingBoxWorld.Max.Y + 0.5f,
+                    (BoundingBoxWorld.Min.Z + BoundingBoxWorld.Max.Z) / 2),
+                Camera.Instance.Projection,
+                Camera.Instance.View,
+                Matrix.Identity);
+
+            // Projected coordinates are already in the correct space
+
             Vector2 baseTextPos = new Vector2(
-                (int)(GraphicsDevice.Viewport.Project(
-                    new Vector3(
-                        (BoundingBoxWorld.Min.X + BoundingBoxWorld.Max.X) / 2,
-                        BoundingBoxWorld.Max.Y + 0.5f,
-                        (BoundingBoxWorld.Min.Z + BoundingBoxWorld.Max.Z) / 2),
-                    Camera.Instance.Projection,
-                    Camera.Instance.View,
-                    Matrix.Identity
-                ).X - textSize.X / 2),
-                (int)GraphicsDevice.Viewport.Project(
-                    new Vector3(
-                        (BoundingBoxWorld.Min.X + BoundingBoxWorld.Max.X) / 2,
-                        BoundingBoxWorld.Max.Y + 0.5f,
-                        (BoundingBoxWorld.Min.Z + BoundingBoxWorld.Max.Z) / 2),
-                    Camera.Instance.Projection,
-                    Camera.Instance.View,
-                    Matrix.Identity
-                ).Y
+                (int)(projectedPos.X - textSize.X / 2),
+                (int)projectedPos.Y
             );
 
             // Save previous states

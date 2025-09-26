@@ -320,3 +320,5 @@ AssetsServer/Assets/
 
 # Ignore local override config
 *.[Ll]ocal.cs
+.claude/settings.local.json
+ServerPackets/
