@@ -1,5 +1,8 @@
-﻿using Client.Main.Controls.UI;
+﻿using System.Collections.Immutable;
+using Client.Main.Controls.UI;
 using Client.Main.Controls.UI.Game;
+using Client.Main.Controls.UI.Game.Inventory;
+using Client.Main.Core.Utilities;
 using Client.Main.Models;
 using Client.Main.Worlds;
 using Microsoft.Extensions.Logging;
@@ -35,18 +38,6 @@ public class TestAnimationScene : BaseScene
     }
 
 
-    private CharacterClassNumber characterClass = CharacterClassNumber.DarkWizard;
-
-    public CharacterClassNumber CharacterClass
-    {
-        get => characterClass;
-        set
-        {
-            if (characterClass == value) return;
-            characterClass = value;
-            // TODO: Raise character class change
-        }
-    }
     private int wing;
     public int Wing
     {
@@ -54,17 +45,17 @@ public class TestAnimationScene : BaseScene
         set => wing = value;
     }
 
-    private int weaponLeft;
-    public int WeaponLeft
+    private int leftHand;
+    public int LeftHand
     {
-        get => weaponLeft;
-        set => weaponLeft = value;
+        get => leftHand;
+        set => leftHand = value;
     }
-    private int weaponRight;
-    public int WeaponRight
+    private int rightHand;
+    public int RightHand
     {
-        get => weaponRight;
-        set => weaponRight = value;
+        get => rightHand;
+        set => rightHand = value;
     }
     private int pet;
     public int Pet
@@ -84,10 +75,10 @@ public class TestAnimationScene : BaseScene
         get => ride;
         set => ride = value;
     }
-    
+
     // CONTROLS
     private SelectWorld _selectWorld;
-    
+
     private readonly ILogger<TestAnimationScene> _logger;
     private LoadingScreenControl _loadingScreen;
     // DIALOGS
@@ -96,8 +87,8 @@ public class TestAnimationScene : BaseScene
     private readonly SelectOptionControl _selectWingOptionControl;
 
     private readonly SelectOptionControl _selectArmorOptionControl;
-    private readonly SelectOptionControl _selectWeaponLeftOptionControl;
-    private readonly SelectOptionControl _selectWeaponRightOptionControl;
+    private readonly SelectOptionControl _selectLeftHandOptionControl;
+    private readonly SelectOptionControl _selectRightHandOptionControl;
     private readonly SelectOptionControl _selectCharacterClassOptionControl;
     private readonly SelectOptionControl _selectPetOptionControl;
     private readonly SelectOptionControl _selectRideOptionControl;
@@ -105,12 +96,119 @@ public class TestAnimationScene : BaseScene
 
     private bool _initialLoadComplete = false;
 
+    private IEnumerable<KeyValuePair<string, int>> CharacterClasses;
+    private IEnumerable<ItemDefinition> Wings;
+    private IEnumerable<ItemDefinition> Armors;
+    private IEnumerable<ItemDefinition> Pets;
+    private IEnumerable<ItemDefinition> Weapons;
+
+    private (string Name, PlayerClass Class, ushort Level, AppearanceConfig Appearance)? character
+    {
+        get
+        {
+            if (_selectCharacterClassOptionControl.Value == null)
+            {
+                return null;
+            }
+            int armorSetIndex = _selectArmorOptionControl.Value.HasValue ? Armors.ElementAt(_selectArmorOptionControl.Value.Value.Value).Id : 0xFFFF;
+            ItemDefinition leftHand = _selectLeftHandOptionControl.Value.HasValue ? Weapons.ElementAt(_selectLeftHandOptionControl.Value.Value.Value) : null;
+            int leftHandItemIndex = leftHand?.Id ?? 0xff;
+            int leftHandItemGroupIndex = leftHand?.Group ?? 0xff;
+            ItemDefinition rightHand = _selectRightHandOptionControl.Value.HasValue ? Weapons.ElementAt(_selectRightHandOptionControl.Value.Value.Value) : null;
+            int rightHandItemIndex = rightHand?.Id ?? 0xff;
+            int rightHandItemGroupIndex = rightHand?.Group ?? 0xff;
+            return (
+                _selectCharacterClassOptionControl.Value.Value.Key ?? "",
+                (PlayerClass)_selectCharacterClassOptionControl.Value.Value.Value,
+                1,
+                new AppearanceConfig()
+                {
+                    PlayerClass = (PlayerClass)_selectCharacterClassOptionControl.Value.Value.Value,
+                    HelmItemIndex = armorSetIndex,
+                    HelmItemLevel = 1,
+                    ArmorItemIndex = armorSetIndex,
+                    ArmorItemLevel = 1,
+                    PantsItemIndex = armorSetIndex,
+                    PantsItemLevel = 1,
+                    GlovesItemIndex = armorSetIndex,
+                    GlovesItemLevel = 1,
+                    BootsItemIndex = armorSetIndex,
+                    BootsItemLevel = 1,
+                    LeftHandItemIndex = (byte)leftHandItemIndex,
+                    LeftHandItemGroup = (byte)leftHandItemGroupIndex,
+                    RightHandItemIndex = (byte)rightHandItemIndex,
+                    RightHandItemGroup = (byte)rightHandItemGroupIndex,
+                }
+            );
+        }
+    }
+
     // Constructors
     public TestAnimationScene()
     {
 
         _logger = MuGame.AppLoggerFactory.CreateLogger<TestAnimationScene>();
 
+        CharacterClasses = new List<KeyValuePair<string, int>>([
+            new(PlayerClass.DarkWizard.ToString(), (int)PlayerClass.DarkWizard),
+            new(PlayerClass.SoulMaster.ToString(), (int)PlayerClass.SoulMaster),
+            new(PlayerClass.GrandMaster.ToString(), (int)PlayerClass.GrandMaster),
+            new(PlayerClass.SoulWizard.ToString(), (int)PlayerClass.SoulWizard),
+            new(PlayerClass.DarkKnight.ToString(), (int)PlayerClass.DarkKnight),
+            new(PlayerClass.BladeKnight.ToString(), (int)PlayerClass.BladeKnight),
+            new(PlayerClass.BladeMaster.ToString(), (int)PlayerClass.BladeMaster),
+            new(PlayerClass.DragonKnight.ToString(), (int)PlayerClass.DragonKnight),
+            new(PlayerClass.FairyElf.ToString(), (int)PlayerClass.FairyElf),
+            new(PlayerClass.MuseElf.ToString(), (int)PlayerClass.MuseElf),
+            new(PlayerClass.HighElf.ToString(), (int)PlayerClass.HighElf),
+            new(PlayerClass.NobleElf.ToString(), (int)PlayerClass.NobleElf),
+            new(PlayerClass.MagicGladiator.ToString(), (int)PlayerClass.MagicGladiator),
+            new(PlayerClass.DuelMaster.ToString(), (int)PlayerClass.DuelMaster),
+            new(PlayerClass.MagicKnight.ToString(), (int)PlayerClass.MagicKnight),
+            new(PlayerClass.DarkLord.ToString(), (int)PlayerClass.DarkLord),
+            new(PlayerClass.LordEmperor.ToString(), (int)PlayerClass.LordEmperor),
+            new(PlayerClass.EmpireLord.ToString(), (int)PlayerClass.EmpireLord),
+            new(PlayerClass.Summoner.ToString(), (int)PlayerClass.Summoner),
+            new(PlayerClass.BloodySummoner.ToString(), (int)PlayerClass.BloodySummoner),
+            new(PlayerClass.DimensionMaster.ToString(), (int)PlayerClass.DimensionMaster),
+            new(PlayerClass.DimensionSummoner.ToString(), (int)PlayerClass.DimensionSummoner),
+            new(PlayerClass.RageFighter.ToString(), (int)PlayerClass.RageFighter),
+            new(PlayerClass.FistMaster.ToString(), (int)PlayerClass.FistMaster),
+            new(PlayerClass.FistBlazer.ToString(), (int)PlayerClass.FistBlazer),
+            new(PlayerClass.GlowLancer.ToString(), (int)PlayerClass.GlowLancer),
+            new(PlayerClass.MirageLancer.ToString(), (int)PlayerClass.MirageLancer),
+            new(PlayerClass.ShiningLancer.ToString(), (int)PlayerClass.ShiningLancer),
+            new(PlayerClass.RuneMage.ToString(), (int)PlayerClass.RuneMage),
+            new(PlayerClass.RuneSpellMaster.ToString(), (int)PlayerClass.RuneSpellMaster),
+            new(PlayerClass.GradRuneMaster.ToString(), (int)PlayerClass.GradRuneMaster),
+            new(PlayerClass.MajesticRuneWizard.ToString(), (int)PlayerClass.MajesticRuneWizard),
+            new(PlayerClass.Slayer.ToString(), (int)PlayerClass.Slayer),
+            new(PlayerClass.RoyalSlayer.ToString(), (int)PlayerClass.RoyalSlayer),
+            new(PlayerClass.MasterSlayer.ToString(), (int)PlayerClass.MasterSlayer),
+            new(PlayerClass.Slaughterer.ToString(), (int)PlayerClass.Slaughterer),
+            new(PlayerClass.GunCrusher.ToString(), (int)PlayerClass.GunCrusher),
+            new(PlayerClass.GunBreaker.ToString(), (int)PlayerClass.GunBreaker),
+            new(PlayerClass.MasterGunBreaker.ToString(), (int)PlayerClass.MasterGunBreaker),
+            new(PlayerClass.HeistGunCrasher.ToString(), (int)PlayerClass.HeistGunCrasher),
+            new(PlayerClass.WhiteWizard.ToString(), (int)PlayerClass.WhiteWizard),
+            new(PlayerClass.LightMaster.ToString(), (int)PlayerClass.LightMaster),
+            new(PlayerClass.ShineWizard.ToString(), (int)PlayerClass.ShineWizard),
+            new(PlayerClass.ShineMaster.ToString(), (int)PlayerClass.ShineMaster),
+            new(PlayerClass.Mage.ToString(), (int)PlayerClass.Mage),
+            new(PlayerClass.WoMage.ToString(), (int)PlayerClass.WoMage),
+            new(PlayerClass.ArchMage.ToString(), (int)PlayerClass.ArchMage),
+            new(PlayerClass.MysticMage.ToString(), (int)PlayerClass.MysticMage),
+            new(PlayerClass.IllusionKnight.ToString(), (int)PlayerClass.IllusionKnight),
+            new(PlayerClass.MirageKnight.ToString(), (int)PlayerClass.MirageKnight),
+            new(PlayerClass.IllusionMaster.ToString(), (int)PlayerClass.IllusionMaster),
+            new(PlayerClass.MysticKnight.ToString(), (int)PlayerClass.MysticKnight),
+            new(PlayerClass.Alchemist.ToString(), (int)PlayerClass.Alchemist),
+            new(PlayerClass.AlchemicMaster.ToString(), (int)PlayerClass.AlchemicMaster),
+            new(PlayerClass.AlchemicForce.ToString(), (int)PlayerClass.AlchemicForce),
+            new(PlayerClass.Creator.ToString(), (int)PlayerClass.Creator),
+        ]);
+        Armors = ItemDatabase.GetArmors();
+        Weapons = ItemDatabase.GetWeapons();
 
         _loadingScreen = new LoadingScreenControl { Visible = true, Message = "Loading Scene" };
         Controls.Add(_loadingScreen);
@@ -122,7 +220,7 @@ public class TestAnimationScene : BaseScene
             Y = 10,
         });
         _selectCharacterClassOptionControl.ValueChanged += HandleChangeCharacterClass;
-        
+
         Controls.Add(_selectArmorOptionControl = new SelectOptionControl()
         {
             Text = "Select Armor",
@@ -131,22 +229,22 @@ public class TestAnimationScene : BaseScene
         });
         _selectArmorOptionControl.ValueChanged += HandleChangeArmorSet;
 
-        Controls.Add(_selectWeaponLeftOptionControl = new SelectOptionControl()
+        Controls.Add(_selectLeftHandOptionControl = new SelectOptionControl()
         {
             Text = "Select Weapon Left",
             X = (180 + 30) * 2 + 10 + 5,
             Y = 10,
         });
-        _selectWeaponLeftOptionControl.ValueChanged += HandleChangeWeaponLeft;
-        
-        Controls.Add(_selectWeaponRightOptionControl = new SelectOptionControl()
+        _selectLeftHandOptionControl.ValueChanged += HandleChangeLeftHand;
+
+        Controls.Add(_selectRightHandOptionControl = new SelectOptionControl()
         {
             Text = "Select Weapon Right",
             X = (180 + 30) * 3 + 10 + 5,
             Y = 10,
         });
-        _selectWeaponRightOptionControl.ValueChanged += HandleChangeWeaponRight;
-        
+        _selectRightHandOptionControl.ValueChanged += HandleChangeRightHand;
+
         Controls.Add(_selectWingOptionControl = new SelectOptionControl()
         {
             Text = "Select Wing",
@@ -154,7 +252,7 @@ public class TestAnimationScene : BaseScene
             Y = 10,
         });
         _selectWingOptionControl.ValueChanged += HandleChangeWing;
-        
+
         Controls.Add(_selectPetOptionControl = new SelectOptionControl()
         {
             Text = "Select Pet",
@@ -162,7 +260,7 @@ public class TestAnimationScene : BaseScene
             Y = 10,
         });
         _selectPetOptionControl.ValueChanged += HandleChangePet;
-        
+
         Controls.Add(_selectRideOptionControl = new SelectOptionControl()
         {
             Text = "Select Riding Pet",
@@ -174,11 +272,11 @@ public class TestAnimationScene : BaseScene
 
         _loadingScreen.BringToFront();
     }
-    
+
 
     private void RefreshUI()
     {
-        switch (_uiState)
+        switch (UiState)
         {
             case TestAnimationUiState.Loading:
                 {
@@ -187,45 +285,14 @@ public class TestAnimationScene : BaseScene
             case TestAnimationUiState.EditCharacter:
                 {
                     _loadingScreen.Visible = false;
-                    _selectCharacterClassOptionControl.Options =
-                    [
-                        new(CharacterClassNumber.DarkWizard.ToString(), (int)CharacterClassNumber.DarkWizard),
-                        new(CharacterClassNumber.SoulMaster.ToString(), (int)CharacterClassNumber.SoulMaster),
-                        new(CharacterClassNumber.GrandMaster.ToString(), (int)CharacterClassNumber.GrandMaster),
-                        new(CharacterClassNumber.DarkKnight.ToString(), (int)CharacterClassNumber.DarkKnight),
-                        new(CharacterClassNumber.BladeKnight.ToString(), (int)CharacterClassNumber.BladeKnight),
-                        new(CharacterClassNumber.BladeMaster.ToString(), (int)CharacterClassNumber.BladeMaster),
-                        new(CharacterClassNumber.FairyElf.ToString(), (int)CharacterClassNumber.FairyElf),
-                        new(CharacterClassNumber.MuseElf.ToString(), (int)CharacterClassNumber.MuseElf),
-                        new(CharacterClassNumber.HighElf.ToString(), (int)CharacterClassNumber.HighElf),
-                        new(CharacterClassNumber.MagicGladiator.ToString(), (int)CharacterClassNumber.MagicGladiator),
-                        new(CharacterClassNumber.DuelMaster.ToString(), (int)CharacterClassNumber.DuelMaster),
-                        new(CharacterClassNumber.DarkLord.ToString(), (int)CharacterClassNumber.DarkLord),
-                        new(CharacterClassNumber.LordEmperor.ToString(), (int)CharacterClassNumber.LordEmperor),
-                        new(CharacterClassNumber.Summoner.ToString(), (int)CharacterClassNumber.Summoner),
-                        new(CharacterClassNumber.BloodySummoner.ToString(), (int)CharacterClassNumber.BloodySummoner),
-                        new(CharacterClassNumber.DimensionMaster.ToString(), (int)CharacterClassNumber.DimensionMaster),
-                        new(CharacterClassNumber.RageFighter.ToString(), (int)CharacterClassNumber.RageFighter),
-                        new(CharacterClassNumber.FistMaster.ToString(), (int)CharacterClassNumber.FistMaster),
-                    ];
+                    _selectCharacterClassOptionControl.Options = CharacterClasses.ToList();
                     _selectCharacterClassOptionControl.Visible = true;
-                    _selectArmorOptionControl.Options =
-                    [
-                        new("Set 0", 0),
-                        new("Set 1", 1),
-                        new("Set 2", 2),
-                        new("Set 3", 3),
-                        new("Set 4", 4),
-                        new("Set 5", 5),
-                        new("Set 6", 6),
-                        new("Set 7", 7),
-                        new("Set 8", 8),
-                        new("Set 9", 9),
-                        new("Set 10", 10),
-                    ];
+                    _selectArmorOptionControl.Options = Armors.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
                     _selectArmorOptionControl.Visible = true;
-                    _selectWeaponLeftOptionControl.Visible = true;
-                    _selectWeaponRightOptionControl.Visible = true;
+                    _selectLeftHandOptionControl.Options = Weapons.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
+                    _selectLeftHandOptionControl.Visible = true;
+                    _selectRightHandOptionControl.Options = Weapons.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
+                    _selectRightHandOptionControl.Visible = true;
                     _selectWingOptionControl.Visible = true;
                     _selectPetOptionControl.Visible = true;
                     _selectRideOptionControl.Visible = true;
@@ -252,7 +319,7 @@ public class TestAnimationScene : BaseScene
     }
 
 
-    
+
 
     protected override async Task LoadSceneContentWithProgress(Action<string, float> progressCallback)
     {
@@ -367,25 +434,40 @@ public class TestAnimationScene : BaseScene
         base.Draw(gameTime);
     }
 
-    public void HandleChangeCharacterClass(object sender, KeyValuePair<string, int> character)
+    private void RefreshCharacter()
     {
-        CharacterClass = (CharacterClassNumber)character.Value;
+        if (!character.HasValue)
+        {
+            _ = _selectWorld.CreateCharacterObjects(new List<(string Name, PlayerClass Class, ushort Level, AppearanceConfig Appearance)>());
+            return;
+        }
+        _ = _selectWorld.CreateCharacterObjects([character.Value]);
+    }
+
+    public void HandleChangeCharacterClass(object sender, KeyValuePair<string, int> newCharacter)
+    {
+        _selectArmorOptionControl.Value = null;
+
+        // _selectArmorOptionControl.Options = 
+        // Rebuild the class
+        RefreshCharacter();
+
     }
     public void HandleChangeArmorSet(object sender, KeyValuePair<string, int> armor)
     {
-        ArmorSet = armor.Value;
+        RefreshCharacter();
     }
     public void HandleChangeWing(object sender, KeyValuePair<string, int> wing)
     {
         Wing = wing.Value;
     }
-    public void HandleChangeWeaponLeft(object sender, KeyValuePair<string, int> weaponL)
+    public void HandleChangeLeftHand(object sender, KeyValuePair<string, int> weaponL)
     {
-        WeaponLeft = weaponL.Value;
+        RefreshCharacter();
     }
-    public void HandleChangeWeaponRight(object sender, KeyValuePair<string, int> weaponR)
+    public void HandleChangeRightHand(object sender, KeyValuePair<string, int> weaponR)
     {
-        WeaponRight = weaponR.Value;
+        RefreshCharacter();
     }
     public void HandleChangePet(object sender, KeyValuePair<string, int> newPet)
     {

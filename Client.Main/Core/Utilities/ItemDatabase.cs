@@ -134,6 +134,28 @@ namespace Client.Main.Core.Utilities
             return def;
         }
 
+        public static IEnumerable<ItemDefinition> GetItemDefinitions(byte group)
+        {
+            return _definitions.Where(predicate => predicate.Key.Group == group).Select(p => p.Value);
+        }
+
+        public static IEnumerable<ItemDefinition> GetWeapons()
+        {
+            return _definitions.Where(predicate => predicate.Key.Group <= 6).Select(p => p.Value);
+        }
+        public static IEnumerable<ItemDefinition> GetWings()
+        {
+            return _definitions.Where(predicate => predicate.Key.Group == 12).Select(p => p.Value);
+        }
+        public static IEnumerable<ItemDefinition> GetArmors()
+        {
+            return _definitions.Where(predicate => predicate.Key.Group == 8).Select(p => p.Value);
+        }
+        public static IEnumerable<ItemDefinition> GetPets()
+        {
+            return _definitions.Where(predicate => predicate.Key.Group == 13).Select(p => p.Value);
+        }
+
         public static ItemDefinition GetItemDefinition(ReadOnlySpan<byte> itemData)
         {
             if (itemData.Length < 6) return null;

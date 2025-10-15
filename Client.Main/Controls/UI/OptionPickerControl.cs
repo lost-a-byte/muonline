@@ -67,15 +67,16 @@ class OptionPickerControl : UIControl
     }
     private List<OptionControl> CachedOptionControls = [];
 
-    private KeyValuePair<string, int> _value;
-    public KeyValuePair<string, int> Value
+    private KeyValuePair<string, int>? _value;
+    public KeyValuePair<string, int>? Value
     {
         get => _value;
         set
         {
             if (
-                _value.Key == value.Key 
-                && _value.Value == value.Value
+                _value.HasValue && value.HasValue
+                && _value?.Key == value?.Key
+                && _value?.Value == value?.Value
             ) return;
             _value = value;
             RefreshOptionSelectedState();
@@ -84,7 +85,7 @@ class OptionPickerControl : UIControl
 
     private ScrollBarControl _scrollBar;
 
-    public event EventHandler<KeyValuePair<string, int>> ValueChanged;
+    public event EventHandler<KeyValuePair<string, int>?> ValueChanged;
     public OptionPickerControl()
     {
         AutoViewSize = false;
@@ -238,7 +239,7 @@ class OptionPickerControl : UIControl
         for (int i = 0; i < CachedOptionControls.Count; i++)
         {
             var item = CachedOptionControls[i];
-            item.Checked = item.Option.Key == Value.Key && item.Option.Value == Value.Value;
+            item.Checked = Value != null && item.Option.Key == Value?.Key && item.Option.Value == Value?.Value;
             if (!item.Checked)
             {
                 item.Label.TextColor = Color.WhiteSmoke;

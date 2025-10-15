@@ -6,7 +6,7 @@ namespace Client.Main.Controls.UI;
 
 public class SelectOptionControl : UIControl
 {
-    public KeyValuePair<string, int> Value
+    public KeyValuePair<string, int>? Value
     {
         get => optionPicker.Value;
         set => optionPicker.Value = value;
@@ -118,9 +118,14 @@ public class SelectOptionControl : UIControl
     {
         optionPicker.Visible = !optionPicker.Visible;
     }
-    private void OnValueChanged(object sender, KeyValuePair<string, int> e)
+    private void OnValueChanged(object sender, KeyValuePair<string, int>? e)
     {
-        Text = e.Key;
-        ValueChanged?.Invoke(this, e);
+        if (!e.HasValue)
+        {
+            Text = "";
+            return;
+        }
+        Text = e.Value.Key;
+        ValueChanged?.Invoke(this, e.Value);
     }
 }
