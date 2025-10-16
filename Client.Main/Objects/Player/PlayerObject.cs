@@ -607,9 +607,9 @@ namespace Client.Main.Objects.Player
             }
 
             // Wings
-            if (appearanceConfig.WingInfo.HasWings)
+            if (appearanceConfig.WingInfo.ItemIndex >= 0)
             {
-                EquippedWings.Type = (short)(appearanceConfig.WingInfo.Type + appearanceConfig.WingInfo.Level + 1);
+                EquippedWings.ItemIndex = appearanceConfig.WingInfo.ItemIndex;
                 EquippedWings.Hidden = false;
                 EquippedWings.LinkParentAnimation = false;
             }

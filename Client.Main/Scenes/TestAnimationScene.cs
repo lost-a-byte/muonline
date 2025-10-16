@@ -117,6 +117,13 @@ public class TestAnimationScene : BaseScene
             ItemDefinition rightHand = _selectRightHandOptionControl.Value.HasValue ? Weapons.ElementAt(_selectRightHandOptionControl.Value.Value.Value) : null;
             int rightHandItemIndex = rightHand?.Id ?? 0xff;
             int rightHandItemGroupIndex = rightHand?.Group ?? 0xff;
+            ItemDefinition wing = _selectWingOptionControl.Value.HasValue ? Wings.ElementAt(_selectWingOptionControl.Value.Value.Value) : null;
+            short wingIndex = -1;
+            if (wing != null)
+            {
+                wingIndex = (short)wing.Id;
+            }
+
             return (
                 _selectCharacterClassOptionControl.Value.Value.Key ?? "",
                 (PlayerClass)_selectCharacterClassOptionControl.Value.Value.Value,
@@ -138,6 +145,7 @@ public class TestAnimationScene : BaseScene
                     LeftHandItemGroup = (byte)leftHandItemGroupIndex,
                     RightHandItemIndex = (byte)rightHandItemIndex,
                     RightHandItemGroup = (byte)rightHandItemGroupIndex,
+                    WingInfo = new WingAppearance(0, 0, wingIndex),
                 }
             );
         }
@@ -209,6 +217,7 @@ public class TestAnimationScene : BaseScene
         ]);
         Armors = ItemDatabase.GetArmors();
         Weapons = ItemDatabase.GetWeapons();
+        Wings = ItemDatabase.GetWings();
 
         _loadingScreen = new LoadingScreenControl { Visible = true, Message = "Loading Scene" };
         Controls.Add(_loadingScreen);
@@ -293,6 +302,7 @@ public class TestAnimationScene : BaseScene
                     _selectLeftHandOptionControl.Visible = true;
                     _selectRightHandOptionControl.Options = Weapons.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
                     _selectRightHandOptionControl.Visible = true;
+                    _selectWingOptionControl.Options = Wings.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
                     _selectWingOptionControl.Visible = true;
                     _selectPetOptionControl.Visible = true;
                     _selectRideOptionControl.Visible = true;
@@ -459,7 +469,7 @@ public class TestAnimationScene : BaseScene
     }
     public void HandleChangeWing(object sender, KeyValuePair<string, int> wing)
     {
-        Wing = wing.Value;
+        RefreshCharacter();
     }
     public void HandleChangeLeftHand(object sender, KeyValuePair<string, int> weaponL)
     {
