@@ -4,6 +4,7 @@ using Client.Main.Controls.UI.Game;
 using Client.Main.Controls.UI.Game.Inventory;
 using Client.Main.Core.Utilities;
 using Client.Main.Models;
+using Client.Main.Objects.Vehicle;
 using Client.Main.Worlds;
 using Microsoft.Extensions.Logging;
 using Microsoft.Xna.Framework;
@@ -91,7 +92,7 @@ public class TestAnimationScene : BaseScene
     private readonly SelectOptionControl _selectRightHandOptionControl;
     private readonly SelectOptionControl _selectCharacterClassOptionControl;
     private readonly SelectOptionControl _selectPetOptionControl;
-    private readonly SelectOptionControl _selectRideOptionControl;
+    private readonly SelectOptionControl _selectVehicleOptionControl;
 
 
     private bool _initialLoadComplete = false;
@@ -101,6 +102,7 @@ public class TestAnimationScene : BaseScene
     private IEnumerable<ItemDefinition> Armors;
     private IEnumerable<ItemDefinition> Pets;
     private IEnumerable<ItemDefinition> Weapons;
+    private IEnumerable<VehicleDefinition> Vehicles;
 
     private (string Name, PlayerClass Class, ushort Level, AppearanceConfig Appearance)? character
     {
@@ -123,7 +125,12 @@ public class TestAnimationScene : BaseScene
             {
                 wingIndex = (short)wing.Id;
             }
-
+            short vehicleIndex = -1;
+            VehicleDefinition vehicle = _selectVehicleOptionControl.Value.HasValue ? Vehicles.ElementAt(_selectVehicleOptionControl.Value.Value.Value) : null;
+            if (vehicle != null)
+            {
+                vehicleIndex = (short)vehicle.Id;
+            }
             return (
                 _selectCharacterClassOptionControl.Value.Value.Key ?? "",
                 (PlayerClass)_selectCharacterClassOptionControl.Value.Value.Value,
@@ -146,6 +153,7 @@ public class TestAnimationScene : BaseScene
                     RightHandItemIndex = (byte)rightHandItemIndex,
                     RightHandItemGroup = (byte)rightHandItemGroupIndex,
                     WingInfo = new WingAppearance(0, 0, wingIndex),
+                    RidingVehicle = vehicleIndex,
                 }
             );
         }
@@ -218,6 +226,7 @@ public class TestAnimationScene : BaseScene
         Armors = ItemDatabase.GetArmors();
         Weapons = ItemDatabase.GetWeapons();
         Wings = ItemDatabase.GetWings();
+        Vehicles = VehicleDatabase.Riders.Values.ToList();
 
         _loadingScreen = new LoadingScreenControl { Visible = true, Message = "Loading Scene" };
         Controls.Add(_loadingScreen);
@@ -270,13 +279,13 @@ public class TestAnimationScene : BaseScene
         });
         _selectPetOptionControl.ValueChanged += HandleChangePet;
 
-        Controls.Add(_selectRideOptionControl = new SelectOptionControl()
+        Controls.Add(_selectVehicleOptionControl = new SelectOptionControl()
         {
-            Text = "Select Riding Pet",
+            Text = "Select Vehicle",
             ButtonAlign = ControlAlign.Bottom,
             Y = ViewSize.Y - 30 - 10,
         });
-        _selectRideOptionControl.ValueChanged += HandleChangeRide;
+        _selectVehicleOptionControl.ValueChanged += HandleChangeRide;
 
 
         _loadingScreen.BringToFront();
@@ -305,7 +314,8 @@ public class TestAnimationScene : BaseScene
                     _selectWingOptionControl.Options = Wings.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
                     _selectWingOptionControl.Visible = true;
                     _selectPetOptionControl.Visible = true;
-                    _selectRideOptionControl.Visible = true;
+                    _selectVehicleOptionControl.Options = Vehicles.Select((p, i) => new KeyValuePair<string, int>(p.Name, i)).ToList();
+                    _selectVehicleOptionControl.Visible = true;
                     break;
                 }
             case TestAnimationUiState.TestAction:
@@ -485,6 +495,6 @@ public class TestAnimationScene : BaseScene
     }
     public void HandleChangeRide(object sender, KeyValuePair<string, int> newRidingPet)
     {
-        Ride = newRidingPet.Value;
+        RefreshCharacter();
     }
 }

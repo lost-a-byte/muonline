@@ -18,6 +18,7 @@ using Microsoft.Xna.Framework.Graphics;
 using Client.Main.Controllers;
 using Client.Main.Helpers;
 using Client.Main.Controls.UI.Game.Inventory;
+using Client.Main.Objects.Vehicle;
 
 namespace Client.Main.Objects.Player
 {
@@ -45,6 +46,8 @@ namespace Client.Main.Objects.Player
         public WeaponObject Weapon1 { get; private set; }
         public WeaponObject Weapon2 { get; private set; }
         public WingObject EquippedWings { get; private set; }
+
+        public VehicleObject Vehicle { get; private set; }
 
         private int _lastEquipmentAnimationStride = -1;
 
@@ -110,6 +113,7 @@ namespace Client.Main.Objects.Player
             Weapon1 = new WeaponObject { };
             Weapon2 = new WeaponObject { };
             EquippedWings = new WingObject { LinkParentAnimation = true, Hidden = true };
+            Vehicle = new VehicleObject { };
 
             Children.Add(HelmMask);
             Children.Add(Helm);
@@ -120,6 +124,7 @@ namespace Client.Main.Objects.Player
             Children.Add(Weapon1);
             Children.Add(Weapon2);
             Children.Add(EquippedWings);
+            Children.Add(Vehicle);
 
             // Enable mouse hover interactions so the name is shown
             Interactive = true;
@@ -616,6 +621,17 @@ namespace Client.Main.Objects.Player
             else
             {
                 EquippedWings.Hidden = true;
+            }
+
+            if (appearanceConfig.RidingVehicle >= 0)
+            {
+                Vehicle.ItemIndex = appearanceConfig.RidingVehicle;
+                Vehicle.Hidden = false;
+                Vehicle.LinkParentAnimation = false;
+            }
+            else
+            {
+                Vehicle.Hidden = true;
             }
             // Weapons
             // This requires more sophisticated logic to determine the exact weapon model

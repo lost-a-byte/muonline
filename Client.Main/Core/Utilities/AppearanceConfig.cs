@@ -73,4 +73,5 @@ public class AppearanceConfig
     public bool HasSkeleton { get; set; } = false;
     public bool HasRudolph { get; set; } = false;
     public bool HasSpiritOfGuardian { get; set; } = false;
+    public short RidingVehicle { get; set; }
 }

@@ -3,9 +3,9 @@ using Client.Main.Models;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 
-namespace Client.Main.Objects.Riders;
+namespace Client.Main.Objects.Vehicle;
 
-public class RiderObject : ModelObject
+public class VehicleObject : ModelObject
 {
 
     private short itemIndex = -1;
@@ -21,7 +21,7 @@ public class RiderObject : ModelObject
 
     }
 
-    public RiderObject()
+    public VehicleObject()
     {
         RenderShadow = true;
         IsTransparent = true;
@@ -31,7 +31,6 @@ public class RiderObject : ModelObject
         BlendMeshState = BlendState.Additive;
         Alpha = 1f;
         LinkParentAnimation = false;
-        ParentBoneLink = 47;
     }
 
     private async Task OnChangeIndex()
@@ -41,7 +40,7 @@ public class RiderObject : ModelObject
             Model = null;
             return;
         }
-        RiderDefinition riderDefinition = RiderDatabase.GetRiderDefinition(itemIndex);
+        VehicleDefinition riderDefinition = VehicleDatabase.GetRiderDefinition(itemIndex);
         if (riderDefinition == null) return;
 
         string modelPath = riderDefinition.TexturePath;

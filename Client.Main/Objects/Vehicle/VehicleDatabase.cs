@@ -1,12 +1,12 @@
 
-namespace Client.Main.Objects.Riders;
+namespace Client.Main.Objects.Vehicle;
 
-public static class RiderDatabase
+public static class VehicleDatabase
 {
-    public static Dictionary<int, RiderDefinition> Riders => new()
+    public static Dictionary<int, VehicleDefinition> Riders => new()
     {
         {
-            0, new RiderDefinition
+            0, new VehicleDefinition
             {
                 Id = 0,
                 Name = "Dark Horse",
@@ -14,7 +14,7 @@ public static class RiderDatabase
             }
         },
         {
-            1, new RiderDefinition
+            1, new VehicleDefinition
             {
                 Id = 1,
                 Name = "Divine Horse",
@@ -22,7 +22,7 @@ public static class RiderDatabase
             }
         },
         {
-            2, new RiderDefinition
+            2, new VehicleDefinition
             {
                 Id = 2,
                 Name = "Giant Dark Wizard 01",
@@ -30,7 +30,7 @@ public static class RiderDatabase
             }
         },
         {
-            3, new RiderDefinition
+            3, new VehicleDefinition
             {
                 Id = 3,
                 Name = "Giant Elf 01",
@@ -38,7 +38,7 @@ public static class RiderDatabase
             }
         },
         {
-            4, new RiderDefinition
+            4, new VehicleDefinition
             {
                 Id = 4,
                 Name = "Giant Grow Lancer 01",
@@ -46,7 +46,7 @@ public static class RiderDatabase
             }
         },
         {
-            5, new RiderDefinition
+            5, new VehicleDefinition
             {
                 Id = 5,
                 Name = "Leviathan",
@@ -54,7 +54,7 @@ public static class RiderDatabase
             }
         },
         {
-            6, new RiderDefinition
+            6, new VehicleDefinition
             {
                 Id = 6,
                 Name = "Leviathan rare",
@@ -62,7 +62,7 @@ public static class RiderDatabase
             }
         },
         {
-            7, new RiderDefinition
+            7, new VehicleDefinition
             {
                 Id = 7,
                 Name = "Rider 01",
@@ -70,7 +70,7 @@ public static class RiderDatabase
             }
         },
         {
-            8, new RiderDefinition
+            8, new VehicleDefinition
             {
                 Id = 8,
                 Name = "Rider 02",
@@ -78,7 +78,7 @@ public static class RiderDatabase
             }
         },
         {
-            9, new RiderDefinition
+            9, new VehicleDefinition
             {
                 Id = 9,
                 Name = "Ur",
@@ -86,7 +86,7 @@ public static class RiderDatabase
             }
         },
         {
-            10, new RiderDefinition
+            10, new VehicleDefinition
             {
                 Id = 10,
                 Name = "Ur Up",
@@ -94,7 +94,7 @@ public static class RiderDatabase
             }
         },
         {
-            11, new RiderDefinition
+            11, new VehicleDefinition
             {
                 Id = 11,
                 Name = "Fenril Black",
@@ -102,7 +102,7 @@ public static class RiderDatabase
             }
         },
         {
-            12, new RiderDefinition
+            12, new VehicleDefinition
             {
                 Id = 12,
                 Name = "Fenril Blue",
@@ -110,7 +110,7 @@ public static class RiderDatabase
             }
         },
         {
-            13, new RiderDefinition
+            13, new VehicleDefinition
             {
                 Id = 13,
                 Name = "Fenril Gold",
@@ -118,7 +118,7 @@ public static class RiderDatabase
             }
         },
         {
-            14, new RiderDefinition
+            14, new VehicleDefinition
             {
                 Id = 14,
                 Name = "Fenril Red",
@@ -126,7 +126,7 @@ public static class RiderDatabase
             }
         },
         {
-            15, new RiderDefinition
+            15, new VehicleDefinition
             {
                 Id = 15,
                 Name = "Fenrir Black",
@@ -134,7 +134,7 @@ public static class RiderDatabase
             }
         },
         {
-            16, new RiderDefinition
+            16, new VehicleDefinition
             {
                 Id = 16,
                 Name = "Fenrir Blue",
@@ -142,7 +142,7 @@ public static class RiderDatabase
             }
         },
         {
-            17, new RiderDefinition
+            17, new VehicleDefinition
             {
                 Id = 17,
                 Name = "Fenrir Gold",
@@ -150,7 +150,7 @@ public static class RiderDatabase
             }
         },
         {
-            18, new RiderDefinition
+            18, new VehicleDefinition
             {
                 Id = 18,
                 Name = "Fenrir Red",
@@ -158,7 +158,7 @@ public static class RiderDatabase
             }
         },
         {
-            19, new RiderDefinition
+            19, new VehicleDefinition
             {
                 Id = 19,
                 Name = "Fiercelion",
@@ -166,7 +166,7 @@ public static class RiderDatabase
             }
         },
         {
-            20, new RiderDefinition
+            20, new VehicleDefinition
             {
                 Id = 20,
                 Name = "Fiercelion Rare",
@@ -174,7 +174,7 @@ public static class RiderDatabase
             }
         },
         {
-            21, new RiderDefinition
+            21, new VehicleDefinition
             {
                 Id = 21,
                 Name = "Ghost Horse",
@@ -182,7 +182,7 @@ public static class RiderDatabase
             }
         },
         {
-            22, new RiderDefinition
+            22, new VehicleDefinition
             {
                 Id = 22,
                 Name = "Griffs Up Ride",
@@ -190,7 +190,7 @@ public static class RiderDatabase
             }
         },
         {
-            23, new RiderDefinition
+            23, new VehicleDefinition
             {
                 Id = 23,
                 Name = "Griffs Ride",
@@ -198,7 +198,7 @@ public static class RiderDatabase
             }
         },
         {
-            24, new RiderDefinition
+            24, new VehicleDefinition
             {
                 Id = 24,
                 Name = "Ice Dragon",
@@ -206,7 +206,7 @@ public static class RiderDatabase
             }
         },
         {
-            25, new RiderDefinition
+            25, new VehicleDefinition
             {
                 Id = 25,
                 Name = "Ice Dragon Rare",
@@ -214,7 +214,7 @@ public static class RiderDatabase
             }
         },
         {
-            26, new RiderDefinition
+            26, new VehicleDefinition
             {
                 Id = 26,
                 Name = "Magma Horse",
@@ -222,7 +222,7 @@ public static class RiderDatabase
             }
         },
         {
-            27, new RiderDefinition
+            27, new VehicleDefinition
             {
                 Id = 27,
                 Name = "Pon Up Ride",
@@ -230,7 +230,7 @@ public static class RiderDatabase
             }
         },
         {
-            28, new RiderDefinition
+            28, new VehicleDefinition
             {
                 Id = 28,
                 Name = "Pon Ride",
@@ -238,7 +238,7 @@ public static class RiderDatabase
             }
         },
         {
-            29, new RiderDefinition
+            29, new VehicleDefinition
             {
                 Id = 29,
                 Name = "Rare Shining Tails",
@@ -246,7 +246,7 @@ public static class RiderDatabase
             }
         },
         {
-            30, new RiderDefinition
+            30, new VehicleDefinition
             {
                 Id = 30,
                 Name = "Rippen Up Ride",
@@ -254,7 +254,7 @@ public static class RiderDatabase
             }
         },
         {
-            31, new RiderDefinition
+            31, new VehicleDefinition
             {
                 Id = 31,
                 Name = "Rippen Ride",
@@ -262,7 +262,7 @@ public static class RiderDatabase
             }
         },
         {
-            32, new RiderDefinition
+            32, new VehicleDefinition
             {
                 Id = 32,
                 Name = "Shining Tails",
@@ -270,7 +270,7 @@ public static class RiderDatabase
             }
         },
         {
-            33, new RiderDefinition
+            33, new VehicleDefinition
             {
                 Id = 33,
                 Name = "Wolfpet Vehicle",
@@ -278,7 +278,7 @@ public static class RiderDatabase
             }
         },
         {
-            34, new RiderDefinition
+            34, new VehicleDefinition
             {
                 Id = 34,
                 Name = "Wolfpet Vehicle Evol",
@@ -287,7 +287,7 @@ public static class RiderDatabase
         },
     };
 
-    public static RiderDefinition GetRiderDefinition(int index)
+    public static VehicleDefinition GetRiderDefinition(int index)
     {
         if (Riders.TryGetValue(index, out var def))
             return def;

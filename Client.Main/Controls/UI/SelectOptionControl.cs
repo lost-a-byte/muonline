@@ -86,8 +86,14 @@ public class SelectOptionControl : UIControl
         {
             optionPicker.Margin = new Margin
             {
-                Bottom = Button.ViewSize.Y,
+                Bottom = Button.ViewSize.Y + 10,
             };
+            Button.Align = ControlAlign.Bottom;
+            Button.Margin = new Margin
+            {
+                Bottom = 10,
+            };
+            Align = ControlAlign.Bottom;
         }
         else
         if (ButtonAlign == ControlAlign.Top)

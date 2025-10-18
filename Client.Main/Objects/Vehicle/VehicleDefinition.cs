@@ -1,7 +1,7 @@
 
-namespace Client.Main.Objects.Riders;
+namespace Client.Main.Objects.Vehicle;
 
-public class RiderDefinition
+public class VehicleDefinition
 {
     public int Id { get; set; }
     public string Name { get; set; }
