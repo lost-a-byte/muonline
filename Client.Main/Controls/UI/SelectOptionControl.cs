@@ -20,6 +20,7 @@ public class SelectOptionControl : UIControl
 
     public event EventHandler<KeyValuePair<string, int>> ValueChanged;
 
+    public event EventHandler<bool> OptionPickerVisibleChanged;
     public List<KeyValuePair<string, int>> Options
     {
         get => optionPicker.Options;
@@ -123,6 +124,7 @@ public class SelectOptionControl : UIControl
     private void OnButtonClick(object sender, EventArgs e)
     {
         optionPicker.Visible = !optionPicker.Visible;
+        OptionPickerVisibleChanged?.Invoke(this, optionPicker.Visible);
     }
     private void OnValueChanged(object sender, KeyValuePair<string, int>? e)
     {

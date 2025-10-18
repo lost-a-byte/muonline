@@ -238,6 +238,7 @@ public class TestAnimationScene : BaseScene
             Y = 10,
         });
         _selectCharacterClassOptionControl.ValueChanged += HandleChangeCharacterClass;
+        _selectCharacterClassOptionControl.OptionPickerVisibleChanged += HandleChangeCharacterClassOptionPickerVisible;
 
         Controls.Add(_selectArmorOptionControl = new SelectOptionControl()
         {
@@ -282,8 +283,9 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectVehicleOptionControl = new SelectOptionControl()
         {
             Text = "Select Vehicle",
-            ButtonAlign = ControlAlign.Bottom,
-            Y = ViewSize.Y - 30 - 10,
+            ButtonAlign = ControlAlign.Top,
+            Y = 10 + 30 + 10,
+            X = 15,
         });
         _selectVehicleOptionControl.ValueChanged += HandleChangeRide;
 
@@ -472,6 +474,10 @@ public class TestAnimationScene : BaseScene
         // Rebuild the class
         RefreshCharacter();
 
+    }
+    public void HandleChangeCharacterClassOptionPickerVisible(object sender, bool isShowPicker)
+    {
+        _selectVehicleOptionControl.Visible = !isShowPicker;
     }
     public void HandleChangeArmorSet(object sender, KeyValuePair<string, int> armor)
     {
