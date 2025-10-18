@@ -263,6 +263,13 @@ namespace Client.Main.Content
                 foreach (var mesh in asset.Meshes)
                 {
                     var fullPath = Path.Combine(dir, mesh.TexturePath);
+                    if (
+                        mesh.TexturePath == "unicon.jpg" 
+                        || mesh.TexturePath == "unicon01.tga"
+                    )
+                    {
+                        fullPath = Path.Combine("Item", mesh.TexturePath);
+                    }
                     if (texturePathMap.TryAdd(mesh.TexturePath.ToLowerInvariant(), fullPath))
                         tasks.Add(TextureLoader.Instance.Prepare(fullPath));
                 }
