@@ -55,7 +55,7 @@ public class SelectOptionControl : UIControl
                 Align = ControlAlign.VerticalCenter,
             },
             Align = this.Align,
-            X = 9,
+            X = 10,
         };
 
         AutoViewSize = true;
