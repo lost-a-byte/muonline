@@ -523,8 +523,8 @@ namespace Client.Main.Objects.Player
             // Update CharacterClass based on appearance data
             //CharacterClass = Appearance.CharacterClass; // TODO: Wrong character class?
             // Update player class
-            await UpdateBodyPartClassesAsync(appearanceConfig.PlayerClass);
-            
+            // await UpdateBodyPartClassesAsync(appearanceConfig.PlayerClass);
+
             // Helm
             if (appearanceConfig.HelmItemIndex != 0XFFFF)
             {
