@@ -284,7 +284,7 @@ public class TestAnimationScene : BaseScene
         {
             Text = "Select Vehicle",
             ButtonAlign = ControlAlign.Top,
-            Y = 10 + 30 + 10,
+            Y = 10 + 29 + 10,
             X = 15,
         });
         _selectVehicleOptionControl.ValueChanged += HandleChangeRide;
