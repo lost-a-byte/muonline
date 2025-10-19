@@ -94,7 +94,7 @@ class OptionPickerControl : UIControl
             LIST_PADDING_LEFT + LIST_ITEM_WIDTH + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
             LIST_PADDING_TOP + LIST_PADDING_BOTTOM + LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP
         );
-        _scrollBar = new ScrollBarControl
+        _scrollBar = new ScrollBarControl(minThumbHeight: 32)
         {
             X = LIST_PADDING_LEFT + LIST_ITEM_WIDTH,
             Y = LIST_PADDING_TOP,
