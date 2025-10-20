@@ -44,7 +44,12 @@ class OptionPickerControl : UIControl
     public int ItemsVisible
     {
         get => itemsVisible;
-        set => itemsVisible = value;
+        set
+        {
+            if (itemsVisible == value) return;
+            itemsVisible = value;
+            RefreshScrollableUI();
+        }
     }
     private int _currentScrollOffset;
     public int CurrentScrollOffset
@@ -215,6 +220,15 @@ class OptionPickerControl : UIControl
 
         }
         RefreshOptionsVisibility();
+    }
+
+    void RefreshScrollableUI()
+    {
+        ViewSize = new Point(
+            LIST_PADDING_LEFT + LIST_ITEM_WIDTH + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
+            LIST_PADDING_TOP + LIST_PADDING_BOTTOM + LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP
+        );
+        _scrollBar.Height = LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP;
     }
 
     void RefreshOptionsVisibility()
