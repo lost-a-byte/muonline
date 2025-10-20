@@ -21,7 +21,7 @@ class OptionControl : OptionLabelButton
     }
 }
 
-class OptionPickerControl : UIControl
+public class OptionPickerControl : UIControl
 {
     // CONSTANTS
     int LIST_PADDING_TOP = 10;
@@ -29,7 +29,7 @@ class OptionPickerControl : UIControl
     int LIST_PADDING_RIGHT = 2;
     int LIST_PADDING_BOTTOM = 10;
     int LIST_GAP = 3;
-    int LIST_ITEM_HEIGHT = 30;
+    int LIST_ITEM_HEIGHT = 29;
     int LIST_ITEM_WIDTH = 180;
 
     int SCROLLBAR_WIDTH = 18;
@@ -48,6 +48,18 @@ class OptionPickerControl : UIControl
         {
             if (itemsVisible == value) return;
             itemsVisible = value;
+            RefreshScrollableUI();
+        }
+    }
+    private ushort listItemWidth = 180;
+    public ushort ListItemWidth
+    {
+        get => listItemWidth;
+        set
+        {
+            if (listItemWidth == value) return;
+            listItemWidth = value;
+            RefreshList();
             RefreshScrollableUI();
         }
     }
@@ -96,12 +108,12 @@ class OptionPickerControl : UIControl
         AutoViewSize = false;
         Interactive = true;
         ViewSize = new Point(
-            LIST_PADDING_LEFT + LIST_ITEM_WIDTH + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
+            LIST_PADDING_LEFT + ListItemWidth + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
             LIST_PADDING_TOP + LIST_PADDING_BOTTOM + LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP
         );
         _scrollBar = new ScrollBarControl(minThumbHeight: 32)
         {
-            X = LIST_PADDING_LEFT + LIST_ITEM_WIDTH,
+            X = LIST_PADDING_LEFT + ListItemWidth,
             Y = LIST_PADDING_TOP,
             Height = LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP,
             Width = SCROLLBAR_WIDTH,
@@ -214,6 +226,14 @@ class OptionPickerControl : UIControl
                 Option = option,
                 Visible = false,
             };
+            if (ListItemWidth != 180)
+            {
+                optionControl.TileWidth = ListItemWidth;
+                optionControl.ViewSize = new Point(ListItemWidth, 29);
+                optionControl.BorderColor = new Color(0xff, 0xff, 0xff, 0x4);
+                optionControl.BorderThickness = 1;
+                optionControl.BackgroundColor = new Color(0x44, 0x44, 0x44);
+            }
             optionControl.Click += OnOptionClick;
             Controls.Add(optionControl);
             CachedOptionControls.Add(optionControl);
@@ -225,9 +245,10 @@ class OptionPickerControl : UIControl
     void RefreshScrollableUI()
     {
         ViewSize = new Point(
-            LIST_PADDING_LEFT + LIST_ITEM_WIDTH + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
+            LIST_PADDING_LEFT + ListItemWidth + LIST_PADDING_RIGHT + SCROLLBAR_WIDTH,
             LIST_PADDING_TOP + LIST_PADDING_BOTTOM + LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP
         );
+        _scrollBar.X = LIST_PADDING_LEFT + ListItemWidth;
         _scrollBar.Height = LIST_ITEM_HEIGHT * ItemsVisible + LIST_GAP * ItemsVisible - LIST_GAP;
     }
 

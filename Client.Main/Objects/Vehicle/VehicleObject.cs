@@ -40,7 +40,7 @@ public class VehicleObject : ModelObject
             Model = null;
             return;
         }
-        VehicleDefinition riderDefinition = VehicleDatabase.GetRiderDefinition(itemIndex);
+        VehicleDefinition riderDefinition = VehicleDatabase.GetVehicleDefinition(itemIndex);
         if (riderDefinition == null) return;
 
         string modelPath = riderDefinition.TexturePath;

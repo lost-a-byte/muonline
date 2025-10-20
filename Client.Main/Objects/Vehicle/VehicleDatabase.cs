@@ -3,7 +3,7 @@ namespace Client.Main.Objects.Vehicle;
 
 public static class VehicleDatabase
 {
-    public static Dictionary<int, VehicleDefinition> Riders => new()
+    public static Dictionary<int, VehicleDefinition> VehicleList => new()
     {
         {
             0, new VehicleDefinition
@@ -287,9 +287,9 @@ public static class VehicleDatabase
         },
     };
 
-    public static VehicleDefinition GetRiderDefinition(int index)
+    public static VehicleDefinition GetVehicleDefinition(int index)
     {
-        if (Riders.TryGetValue(index, out var def))
+        if (VehicleList.TryGetValue(index, out var def))
             return def;
         return null;
     }

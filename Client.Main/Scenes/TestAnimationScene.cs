@@ -70,12 +70,6 @@ public class TestAnimationScene : BaseScene
         get => armorSet;
         set => armorSet = value;
     }
-    private int ride;
-    public int Ride
-    {
-        get => ride;
-        set => ride = value;
-    }
 
     // CONTROLS
     private SelectWorld _selectWorld;
@@ -230,7 +224,13 @@ public class TestAnimationScene : BaseScene
         Armors = ItemDatabase.GetArmors();
         Weapons = ItemDatabase.GetWeapons();
         Wings = ItemDatabase.GetWings();
-        Vehicles = VehicleDatabase.Riders.Values.ToList();
+        Vehicles = [
+            new VehicleDefinition {
+                Id = -1,
+                Name = "Unset",
+            },
+            ..VehicleDatabase.VehicleList.Values.ToList()
+        ];
 
         _loadingScreen = new LoadingScreenControl { Visible = true, Message = "Loading Scene" };
         Controls.Add(_loadingScreen);
@@ -238,6 +238,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectCharacterClassOptionControl = new SelectOptionControl()
         {
             Text = "Select Class",
+            Placeholder = "Select Class",
             X = 10 + 5,
             Y = 10,
         });
@@ -247,6 +248,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectArmorOptionControl = new SelectOptionControl()
         {
             Text = "Select Armor",
+            Placeholder = "Select Armor",
             X = 180 + 30 + 10 + 5,
             Y = 10,
         });
@@ -255,6 +257,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectLeftHandOptionControl = new SelectOptionControl()
         {
             Text = "Select Weapon Left",
+            Placeholder = "Select Weapon Left",
             X = (180 + 30) * 2 + 10 + 5,
             Y = 10,
         });
@@ -263,6 +266,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectRightHandOptionControl = new SelectOptionControl()
         {
             Text = "Select Weapon Right",
+            Placeholder = "Select Weapon Right",
             X = (180 + 30) * 3 + 10 + 5,
             Y = 10,
         });
@@ -271,6 +275,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectWingOptionControl = new SelectOptionControl()
         {
             Text = "Select Wing",
+            Placeholder = "Select Wing",
             X = (180 + 30) * 4 + 10 + 5,
             Y = 10,
         });
@@ -279,6 +284,7 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectPetOptionControl = new SelectOptionControl()
         {
             Text = "Select Pet",
+            Placeholder = "Select Pet",
             X = (180 + 30) * 5 + 10 + 5,
             Y = 10,
         });
@@ -287,11 +293,12 @@ public class TestAnimationScene : BaseScene
         Controls.Add(_selectVehicleOptionControl = new SelectOptionControl()
         {
             Text = "Select Vehicle",
+            Placeholder = "Select Vehicle",
             ButtonAlign = ControlAlign.Top,
             Y = 10 + 29 + 10,
             X = 15,
         });
-        _selectVehicleOptionControl.ValueChanged += HandleChangeRide;
+        _selectVehicleOptionControl.ValueChanged += HandleChangeVehicle;
 
 
         Controls.Add(_appearanceConfigButton = new LabelButton
@@ -327,6 +334,7 @@ public class TestAnimationScene : BaseScene
             Options = new(),
             ItemsVisible = 21,
         });
+        _selectAnimationOptionControl.ListItemWidth = 320;
         _selectAnimationOptionControl.ValueChanged += HandleChangeAnimation;
         Actions = [
             new(PlayerAction.Set.ToString(), (int)PlayerAction.Set),
@@ -654,12 +662,19 @@ public class TestAnimationScene : BaseScene
                     if (_loadingScreen != null)
                     _loadingScreen.Visible = false;
                     _selectCharacterClassOptionControl.Visible = false;
+                    _selectCharacterClassOptionControl.HideOptionPicker();
                     _selectArmorOptionControl.Visible = false;
+                    _selectArmorOptionControl.HideOptionPicker();
                     _selectLeftHandOptionControl.Visible = false;
+                    _selectLeftHandOptionControl.HideOptionPicker();
                     _selectRightHandOptionControl.Visible = false;
+                    _selectRightHandOptionControl.HideOptionPicker();
                     _selectWingOptionControl.Visible = false;
+                    _selectWingOptionControl.HideOptionPicker();
                     _selectPetOptionControl.Visible = false;
+                    _selectPetOptionControl.HideOptionPicker();
                     _selectVehicleOptionControl.Visible = false;
+                    _selectVehicleOptionControl.HideOptionPicker();
                     _selectAnimationOptionControl.Options = Actions.Select((p, i) => new KeyValuePair<string, int>(p.Key, p.Value)).ToList();
                     _selectAnimationOptionControl.Visible = true;
                     break;
@@ -817,6 +832,7 @@ public class TestAnimationScene : BaseScene
     public void HandleChangeCharacterClassOptionPickerVisible(object sender, bool isShowPicker)
     {
         _selectVehicleOptionControl.Visible = !isShowPicker;
+        _selectVehicleOptionControl.HideOptionPicker();
     }
     public void HandleChangeArmorSet(object sender, KeyValuePair<string, int> armor)
     {
@@ -838,8 +854,13 @@ public class TestAnimationScene : BaseScene
     {
         Pet = newPet.Value;
     }
-    public void HandleChangeRide(object sender, KeyValuePair<string, int> newRidingPet)
+    public void HandleChangeVehicle(object sender, KeyValuePair<string, int> newVehicle)
     {
+        VehicleDefinition vehicle = Vehicles.ElementAt(newVehicle.Value);
+        if (vehicle.Id < 0)
+        {
+            _selectVehicleOptionControl.ClearValue();
+        }
         RefreshCharacter();
     }
 

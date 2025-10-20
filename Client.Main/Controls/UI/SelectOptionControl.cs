@@ -54,6 +54,7 @@ public class SelectOptionControl : UIControl
     {
         Visible = false,
     };
+    public OptionPickerControl OptionPicker => optionPicker;
 
     public SelectOptionControl()
     {
