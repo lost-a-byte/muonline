@@ -531,7 +531,13 @@ namespace Client.Main.Objects.Player
                 var helmDef = ItemDatabase.GetItemDefinition(7, (short)appearanceConfig.HelmItemIndex);
                 if (helmDef?.TexturePath != null)
                 {
-                    await LoadPartAsync(Helm, helmDef.TexturePath);
+                    string helmTexturePath = helmDef.TexturePath.Replace("Item/", "Player/");
+                    bool helmTextureExists = await BMDLoader.Instance.AssestExist(helmTexturePath);
+                    if (!helmTextureExists)
+                    {
+                        helmTexturePath = helmDef.TexturePath;   
+                    }
+                    await LoadPartAsync(Helm, helmTexturePath);
                 }
 
                 // Apply item properties for shader effects
@@ -545,7 +551,13 @@ namespace Client.Main.Objects.Player
                 var armorDef = ItemDatabase.GetItemDefinition(8, (short)appearanceConfig.ArmorItemIndex);
                 if (armorDef?.TexturePath != null)
                 {
-                    await LoadPartAsync(Armor, armorDef.TexturePath);
+                    string armorTexturePath = armorDef.TexturePath.Replace("Item/", "Player/");
+                    bool armorTextureExists = await BMDLoader.Instance.AssestExist(armorTexturePath);
+                    if (!armorTextureExists)
+                    {
+                        armorTexturePath = armorDef.TexturePath;   
+                    }
+                    await LoadPartAsync(Armor, armorTexturePath);
                 }
 
                 // Apply item properties for shader effects
@@ -560,7 +572,13 @@ namespace Client.Main.Objects.Player
                 var pantsDef = ItemDatabase.GetItemDefinition(9, (short)appearanceConfig.PantsItemIndex);
                 if (pantsDef?.TexturePath != null)
                 {
-                    await LoadPartAsync(Pants, pantsDef.TexturePath);
+                    string pantsTexturePath = pantsDef.TexturePath.Replace("Item/", "Player/");
+                    bool pantsTextureExists = await BMDLoader.Instance.AssestExist(pantsTexturePath);
+                    if (!pantsTextureExists)
+                    {
+                        pantsTexturePath = pantsDef.TexturePath;   
+                    }
+                    await LoadPartAsync(Pants, pantsTexturePath);
                 }
 
                 // Apply item properties for shader effects
@@ -575,9 +593,14 @@ namespace Client.Main.Objects.Player
                 var glovesDef = ItemDatabase.GetItemDefinition(10, (short)appearanceConfig.GlovesItemIndex);
                 if (glovesDef?.TexturePath != null)
                 {
-                    var playerTexturePath = glovesDef.TexturePath;
-                    _logger?.LogInformation($"[PlayerObject] Loading gloves: Group=10, ID={appearanceConfig.GlovesItemIndex}, ItemTexturePath={glovesDef.TexturePath}, PlayerTexturePath={playerTexturePath}");
-                    await LoadPartAsync(Gloves, playerTexturePath);
+                    string glovesTexturePath = glovesDef.TexturePath.Replace("Item/", "Player/");
+                    bool glovesTextureExists = await BMDLoader.Instance.AssestExist(glovesTexturePath);
+                    if (!glovesTextureExists)
+                    {
+                        glovesTexturePath = glovesDef.TexturePath;   
+                    }
+                    _logger?.LogInformation($"[PlayerObject] Loading gloves: Group=10, ID={appearanceConfig.GlovesItemIndex}, ItemTexturePath={glovesDef.TexturePath}, PlayerTexturePath={glovesTexturePath}");
+                    await LoadPartAsync(Gloves, glovesTexturePath);
                 }
                 else
                 {
@@ -596,9 +619,14 @@ namespace Client.Main.Objects.Player
                 var bootsDef = ItemDatabase.GetItemDefinition(11, (short)appearanceConfig.BootsItemIndex);
                 if (bootsDef?.TexturePath != null)
                 {
-                    var playerTexturePath = bootsDef.TexturePath;
-                    _logger?.LogInformation($"[PlayerObject] Loading boots: Group=11, ID={appearanceConfig.BootsItemIndex}, ItemTexturePath={bootsDef.TexturePath}, PlayerTexturePath={playerTexturePath}");
-                    await LoadPartAsync(Boots, playerTexturePath);
+                    string bootsTexturePath = bootsDef.TexturePath.Replace("Item/", "Player/");
+                    bool bootsTextureExists = await BMDLoader.Instance.AssestExist(bootsTexturePath);
+                    if (!bootsTextureExists)
+                    {
+                        bootsTexturePath = bootsDef.TexturePath;   
+                    }
+                    _logger?.LogInformation($"[PlayerObject] Loading boots: Group=11, ID={appearanceConfig.BootsItemIndex}, ItemTexturePath={bootsDef.TexturePath}, PlayerTexturePath={bootsTexturePath}");
+                    await LoadPartAsync(Boots, bootsTexturePath);
                 }
                 else
                 {

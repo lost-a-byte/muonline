@@ -222,6 +222,11 @@ namespace Client.Main.Content
             }
         }
 
+        public Task<bool> AssestExist(string path)
+        {
+            string finalPath = Path.Combine(Constants.DataPath, path);
+            return Task.FromResult(File.Exists(finalPath));
+        }
         private async Task<BMD> LoadAssetAsync(string path, string textureFolder = null)
         {
             try
@@ -264,7 +269,7 @@ namespace Client.Main.Content
                 {
                     var fullPath = Path.Combine(dir, mesh.TexturePath);
                     if (
-                        mesh.TexturePath == "unicon.jpg" 
+                        mesh.TexturePath == "unicon.jpg"
                         || mesh.TexturePath == "unicon01.tga"
                     )
                     {
