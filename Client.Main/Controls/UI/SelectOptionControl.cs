@@ -18,6 +18,17 @@ public class SelectOptionControl : UIControl
         set => Button.Label.Text = value;
     }
 
+    private string placeholder;
+    public string Placeholder
+    {
+        get => placeholder;
+        set
+        {
+            placeholder = value;
+            Button.Label.Text = value;   
+        }
+    }
+
     public event EventHandler<KeyValuePair<string, int>> ValueChanged;
 
     public event EventHandler<bool> OptionPickerVisibleChanged;
@@ -135,5 +146,16 @@ public class SelectOptionControl : UIControl
         }
         Text = e.Value.Key;
         ValueChanged?.Invoke(this, e.Value);
+    }
+    public void ClearValue()
+    {
+        Text = Placeholder ?? "";
+        Value = null;
+    }
+
+    public void HideOptionPicker()
+    {
+        optionPicker.Visible = false;
+        OptionPickerVisibleChanged?.Invoke(this, false);
     }
 }
