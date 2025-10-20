@@ -326,6 +326,21 @@ namespace Client.Main.Worlds
             activePlayer.PlayEmoteAnimation(randomEmote);
         }
 
+        public void PlayEmoteAnimation(PlayerAction action)
+        {
+            if (_currentCharacterIndex < 0 || _currentCharacterIndex >= _characterObjects.Count)
+                return;
+
+            var activePlayer = _characterObjects[_currentCharacterIndex];
+            if (activePlayer == null || activePlayer.Hidden)
+                return;
+
+            // Check if character is already playing an animation
+            if (activePlayer.IsOneShotPlaying)
+                return;
+            activePlayer.PlayEmoteAnimation(action);
+        }
+
 
         private void PlayerObject_Click(object sender, EventArgs e)
         {
