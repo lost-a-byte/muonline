@@ -356,7 +356,7 @@ public class TestAnimationScene : BaseScene
         
         Actions = new List<KeyValuePair<string, int>>(TOTAL_PLAYER_ACTION_COUNT);
         Actions.AddRange(
-            Enumerable.Range(0, TOTAL_PLAYER_ACTION_COUNT - 1)
+            Enumerable.Range(0, TOTAL_PLAYER_ACTION_COUNT)
                 .Select(i => new KeyValuePair<string, int>($"{i}_{(PlayerAction)i}", i)
             )
         );
